@@ -643,14 +643,30 @@ CM.app = (function(){
   }
   function finishBoot(){ updateCounts(); if(!booted){ booted=true; switchView('map'); } else refresh(); }
 
-  async function maybeMigrate(){
+  function localGuestRecords(){
     let local=[]; try{ local=JSON.parse(localStorage.getItem('coffeemap.records.v1')||'[]'); }catch(e){}
-    const guest=local.filter(r=> r&&r.id&&!/^s\d+$/.test(String(r.id)));
-    if(guest.length && CM.store.all().length===0 && confirm(`检测到本地有 ${guest.length} 条记录，是否上传到你的云端账号？（上传后多设备同步）`)){
-      for(const r of guest){ try{ await CM.cloud.upsert(r); }catch(e){} }
-      try{ CM.store.setCache(await CM.cloud.fetchAll()); }catch(e){}
-      toast(`已上传 ${guest.length} 条到云端`);
+    return local.filter(r=> r&&r.id && !/^s\d+$/.test(String(r.id)));   // 排除示例数据 s1..s11
+  }
+  function pendingLocal(){
+    const cloudIds=new Set(CM.store.all().map(r=>r.id));
+    return localGuestRecords().filter(r=> !cloudIds.has(r.id));
+  }
+  async function uploadRecords(records){
+    let ok=0; for(const r of records){ try{ await CM.cloud.upsert(r); ok++; }catch(e){ console.error('upload',e); } }
+    try{ CM.store.setCache(await CM.cloud.fetchAll()); }catch(e){}
+    return ok;
+  }
+  async function maybeMigrate(){
+    const pending=pendingLocal();
+    if(pending.length && confirm(`检测到本地有 ${pending.length} 条未同步到云端的记录，是否现在上传？（上传后多设备同步）`)){
+      const n=await uploadRecords(pending); toast(`已上传 ${n} 条到云端`);
     }
+  }
+  async function syncLocal(){
+    if(!(CM.cloud&&CM.cloud.user)){ toast('请先登录'); return; }
+    const pending=pendingLocal();
+    if(!pending.length){ toast('本地没有需要上传的记录'); return; }
+    const n=await uploadRecords(pending); refresh(); toast(`已上传 ${n} 条到云端`);
   }
 
   /* ===== 账号 UI ===== */
@@ -701,14 +717,20 @@ CM.app = (function(){
     }});
   }
   function openAccount(user){
+    const pend=pendingLocal().length;
     openModal('我的账号', `
       <div class="flex gap12" style="align-items:center;margin-bottom:20px">
         <div style="width:48px;height:48px;border-radius:50%;background:var(--bg-2);display:flex;align-items:center;justify-content:center;color:var(--accent)">${CM.icon('user',{size:24})}</div>
         <div><div style="font-weight:600">${CM.esc(user.email||'已登录')}</div>
           <div class="muted" style="font-size:12.5px;display:flex;align-items:center;gap:5px;margin-top:2px">${CM.icon('cloud',{size:13})} 云端同步中 · ${CM.store.all().length} 条记录</div></div>
       </div>
+      ${pend ? `<button class="btn primary" id="ac-sync" style="width:100%;justify-content:center;margin-bottom:10px">${CM.icon('cloud',{size:15})} 上传本地 ${pend} 条未同步记录</button>`
+             : `<button class="btn ghost" id="ac-sync" style="width:100%;justify-content:center;margin-bottom:10px">${CM.icon('cloud',{size:15})} 同步本地记录到云端</button>`}
       <button class="btn ghost" id="ac-out" style="width:100%;justify-content:center">${CM.icon('logout',{size:15})} 退出登录</button>
-    `,{onMount:(body,close)=>{ body.querySelector('#ac-out').onclick=async()=>{ try{ await CM.cloud.signOut(); }catch(e){} close(); toast('已退出登录'); }; }});
+    `,{onMount:(body,close)=>{
+      body.querySelector('#ac-sync').onclick=async()=>{ await syncLocal(); close(); };
+      body.querySelector('#ac-out').onclick=async()=>{ try{ await CM.cloud.signOut(); }catch(e){} close(); toast('已退出登录'); };
+    }});
   }
 
   return { init, switchView, openForm, openRecord, editRecord:id=>openForm({},id), deleteRecord:id=>{ if(confirm('删除这条记录？')){CM.store.remove(id); while(modalStack.length){const s=modalStack.pop();s.classList.remove('show');setTimeout(()=>s.remove(),250);} refresh(); toast('已删除');} },

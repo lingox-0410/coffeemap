@@ -75,6 +75,8 @@ CoffeeMap/
 **备份 / 迁移到另一台设备**
 - 底部「**导出数据**」→ 得到 `coffeemap-data.json`；在新设备打开工具后「**导入数据**」选这个文件即可（会提示覆盖，导入前可先导出当前数据备份）。
 
+**想"一处更新、朋友永远用最新版"？** 见 [DEPLOY.md](DEPLOY.md)（推荐 GitHub + Cloudflare Pages / Netlify，`git push` 即自动发布）。
+
 **把「工具」分享给朋友的三种方式**
 1. **发压缩包**：把整个 `CoffeeMap` 文件夹打包发给朋友，对方解压后双击 `index.html` 即可用（依赖已本地化，**可离线**）。朋友看到的是空白工具+示例数据，记录的是他**自己**的数据。
 2. **免费托管成网址**（推荐，便于多人各自使用）：把文件夹拖到 [Netlify Drop](https://app.netlify.com/drop) / Vercel / GitHub Pages，得到一个链接发出去。每个访问者的数据都存在各自浏览器里，互不影响。

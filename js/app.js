@@ -614,18 +614,35 @@ CM.app = (function(){
     document.getElementById('addBtn').onclick=()=>openForm();
     document.addEventListener('cm:changed',updateCounts);
     document.addEventListener('cm:cloudError',()=>toast('云端同步失败，请检查网络'));
-    const ab=document.getElementById('acctBtn'); if(ab) ab.onclick=()=>{ const u=CM.cloud&&CM.cloud.user; if(u) openAccount(u); else openSignIn(); };
+    const ab=document.getElementById('acctBtn'); if(ab) ab.onclick=async()=>{
+      if(CM.cloud && CM.cloud.configured() && !CM.cloud.enabled){
+        const ok=await CM.cloud.ensureReady();
+        if(!ok){ toast('云端组件未就绪，请检查网络后重试'); return; }
+        CM.cloud.onChange((session)=> onAuth(session));
+        let s=null; try{ s=await CM.cloud.getSession(); }catch(e){}
+        await onAuth(s);
+      }
+      const u=CM.cloud&&CM.cloud.user; if(u) openAccount(u); else openSignIn();
+    };
     bootstrap();
   }
 
   /* ===== 启动：有云端配置→走账号/同步；否则→本地存储 ===== */
   async function bootstrap(){
-    if(CM.cloud && CM.cloud.init()){
-      CM.cloud.onChange((session)=> onAuth(session));
-      let session=null; try{ session=await CM.cloud.getSession(); }catch(e){}
-      await onAuth(session);
+    if(CM.cloud && CM.cloud.configured()){
+      renderAccount(null);                       // 先把"登录"入口显示出来（即使 SDK 还没就绪）
+      let ok = CM.cloud.init();
+      if(!ok){ try{ ok = await CM.cloud.ensureReady(); }catch(e){} }   // 重进时本地脚本没加载→懒加载重试
+      if(ok){
+        CM.cloud.onChange((session)=> onAuth(session));
+        let session=null; try{ session=await CM.cloud.getSession(); }catch(e){}
+        await onAuth(session);
+        return;
+      }
+      // 配置了但 SDK 实在加载不出来：仍显示登录入口（点击时再试），暂用本地
+      CM.store.seedIfEmpty(CM.seed); finishBoot();
     }else{
-      renderAccount(null);              // 云端未启用 → 隐藏账号按钮
+      renderAccount(null);                        // 未配置云端 → 隐藏账号按钮
       CM.store.seedIfEmpty(CM.seed);
       finishBoot();
     }
@@ -674,7 +691,7 @@ CM.app = (function(){
   /* ===== 账号 UI ===== */
   function renderAccount(user){
     const b=document.getElementById('acctBtn'); if(!b) return;
-    if(!(CM.cloud&&CM.cloud.enabled)){ b.style.display='none'; return; }
+    if(!(CM.cloud&&CM.cloud.configured())){ b.style.display='none'; return; }  // 只要配置了云端就常显（不依赖 SDK 是否已加载）
     b.style.display='';
     b.classList.toggle('on', !!user);
     b.innerHTML = user ? `${CM.icon('user',{size:16})}<span class="acct-label">${CM.esc((user.email||'账号').split('@')[0])}</span>`

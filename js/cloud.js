@@ -19,8 +19,27 @@ CM.cloud = (function(){
     return enabled;
   }
 
+  // 是否已配置云端（与 SDK 是否加载成功无关）
+  function configured(){ const c=window.CM_CONFIG||{}; return !!(c.SUPABASE_URL && c.SUPABASE_ANON_KEY); }
+  // 按需懒加载 supabase SDK（带缓存绕过重试），解决某些浏览器重进时本地脚本未加载的问题
+  function loadSdk(){
+    return new Promise(res=>{
+      if(window.supabase && window.supabase.createClient) return res(true);
+      const s=document.createElement('script');
+      s.src='js/vendor/supabase.min.js?r='+Date.now();
+      s.onload=()=>res(!!(window.supabase && window.supabase.createClient));
+      s.onerror=()=>res(false);
+      (document.head||document.documentElement).appendChild(s);
+    });
+  }
+  async function ensureReady(){
+    if(enabled) return true;
+    if(!(window.supabase && window.supabase.createClient)) await loadSdk();
+    return init();
+  }
+
   return {
-    init,
+    init, configured, ensureReady,
     get enabled(){ return enabled; },
     get user(){ return user; },
     setUser(u){ user = u; },

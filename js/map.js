@@ -3,8 +3,18 @@
  * ==========================================================================*/
 window.CM = window.CM || {};
 CM.map = (function(){
-  const W=960, H=500;
-  const interp = d3.interpolateRgbBasis(['#f3ecdf','#e7c879','#cf9a4e','#a9733f','#5e3a1e']);
+  const W=960;
+  // 每个产地一种低饱和、协调的颜色（按大洲分组：非洲=暖棕橙 / 美洲=绿松 / 亚洲=紫蓝）
+  const COUNTRY_COLOR = {
+    Ethiopia:'#C2683F', Kenya:'#A8452B', Yemen:'#8C4A39',
+    Rwanda:'#D49A57', Burundi:'#C3873F', Tanzania:'#B07C3C', Uganda:'#9A6A38',
+    Colombia:'#4F8C6A', Brazil:'#3F6E54', Peru:'#5E9B86', Bolivia:'#4E8C7A', Ecuador:'#63A074',
+    Panama:'#4FA08C', 'Costa Rica':'#5BA89A', Guatemala:'#6E8E4E', Honduras:'#86A05A',
+    'El Salvador':'#9AA95E', Nicaragua:'#5E8C66', Mexico:'#B0934E', Jamaica:'#7FB0A0',
+    Indonesia:'#6B5B95', India:'#9A6AA0', Vietnam:'#5A6FA0', China:'#7E6BA8', 'Papua New Guinea':'#5E7BA0',
+  };
+  const _h = h => { const n=parseInt(h.slice(1),16); return [n>>16&255, n>>8&255, n&255]; };
+  const mix = (a,b,t)=>{ const x=_h(a),y=_h(b),c=i=>Math.round(x[i]+(y[i]-x[i])*t); return `rgb(${c(0)},${c(1)},${c(2)})`; };
 
   function statsByCountry(records){
     const m=new Map();
@@ -27,72 +37,60 @@ CM.map = (function(){
 
     const stats=statsByCountry(records);
     const maxCount=Math.max(1,...[...stats.values()].map(s=>s.count));
-    const val = s => metric==='avg' ? (s.avg/5) : (s.count/maxCount);
-
-    const proj=d3.geoNaturalEarth1().fitExtent([[8,8],[W-8,H-30]],
-      {type:'Sphere'});
-    const path=d3.geoPath(proj);
-    const svg=d3.select(wrap).append('svg').attr('viewBox',`0 0 ${W} ${H}`);
-
-    // ocean sphere
-    svg.append('path').attr('d',path({type:'Sphere'})).attr('fill','#fbfbfd');
-    svg.append('path').attr('d',d3.geoPath(proj)(d3.geoGraticule10())).attr('fill','none')
-       .attr('stroke','#eef0f2').attr('stroke-width',.5);
-
     const feats=topojson.feature(window.WORLD_TOPO, window.WORLD_TOPO.objects.countries).features;
     const originKeys=new Set(CM.origins.map(o=>o.key));
+
+    // 投影：等距圆柱 + 裁切到咖啡带（按产地坐标拟合，集中赤道附近）
+    const pts={type:'FeatureCollection',features:CM.origins.map(o=>({type:'Feature',geometry:{type:'Point',coordinates:o.coord}}))};
+    const proj=d3.geoEquirectangular(); proj.fitWidth(W, pts);
+    const path=d3.geoPath(proj);
+    const pb=path.bounds(pts); const padTop=66, padBot=58;
+    const vbY=Math.floor(pb[0][1]-padTop), vbH=Math.ceil((pb[1][1]-pb[0][1])+padTop+padBot);
+    const svg=d3.select(wrap).append('svg').attr('viewBox',`0 ${vbY} ${W} ${vbH}`).style('width','100%').style('height','auto');
+
+    svg.append('path').attr('d',path(d3.geoGraticule10())).attr('fill','none').attr('stroke','#eef0f2').attr('stroke-width',.5);
+
+    function fillFor(key){
+      const base=COUNTRY_COLOR[key]; if(!base) return '#edeef1';
+      const s=stats.get(key); if(!s) return mix('#ffffff', base, .16);   // 咖啡产地·无记录：极淡底色
+      const ratio = metric==='avg' ? (s.avg/5) : (s.count/maxCount);
+      return mix(base, '#241812', .50*Math.sqrt(Math.max(.0001,ratio)));  // 有记录=整片本色；越多/越高→越深
+    }
 
     svg.append('g').selectAll('path').data(feats).join('path')
       .attr('d',path)
       .attr('class',d=> originKeys.has(d.properties.name)?'country coffee':'country')
-      .attr('fill',d=>{
-        const s=stats.get(d.properties.name);
-        if(s) return interp(Math.max(.12,val(s)));
-        return originKeys.has(d.properties.name) ? '#eceae4' : '#ececf0';
-      })
+      .attr('fill',d=> fillFor(d.properties.name))
       .on('mousemove',function(ev,d){
-        const o=CM.find.origin(d.properties.name); if(!o) { tip.style.opacity=0; return; }
-        const s=stats.get(d.properties.name);
-        const rect=wrap.getBoundingClientRect();
+        const o=CM.find.origin(d.properties.name); if(!o){ tip.style.opacity=0; return; }
+        const s=stats.get(d.properties.name); const rect=wrap.getBoundingClientRect();
         tip.style.left=(ev.clientX-rect.left)+'px'; tip.style.top=(ev.clientY-rect.top)+'px';
-        tip.innerHTML=`<div class="t">${CM.flag(o.key)} ${o.cn}</div>`+
-          (s?`记录 ${s.count} 杯 · 均分 ${s.avg.toFixed(1)} 分`:'点击探索产地知识');
+        tip.innerHTML=`<div class="t">${CM.flag(o.key)} ${o.cn}</div>`+(s?`记录 ${s.count} 杯 · 均分 ${s.avg.toFixed(1)} 分`:'点击探索产地知识');
         tip.style.opacity=1;
       })
       .on('mouseleave',()=> tip.style.opacity=0)
       .on('click',(ev,d)=>{ const o=CM.find.origin(d.properties.name); if(o) onSelect(o.key); });
 
-    // origin pins
+    // 产地圆点（小，作定位/点击；有记录略深）
     const g=svg.append('g');
     CM.origins.forEach(o=>{
-      const p=proj(o.coord); if(!p) return;
-      const s=stats.get(o.key);
-      const rad=s? 4+Math.sqrt(s.count)*2.4 : 2.6;
+      const p=proj(o.coord); if(!p) return; const s=stats.get(o.key);
+      const rad=s? 2.6+Math.sqrt(s.count)*1.2 : 2;
       g.append('circle').attr('class','origin-dot').attr('cx',p[0]).attr('cy',p[1]).attr('r',rad)
-        .attr('fill', s? '#3a241a' : 'rgba(138,90,43,.35)')
-        .attr('stroke','#fff').attr('stroke-width',1.2)
-        .style('cursor','pointer')
-        .on('mousemove',function(ev){
-          const rect=wrap.getBoundingClientRect();
+        .attr('fill', s? mix(COUNTRY_COLOR[o.key]||'#5e3a1e','#000',.28) : 'rgba(120,90,60,.45)')
+        .attr('stroke','#fff').attr('stroke-width',1).style('cursor','pointer')
+        .on('mousemove',function(ev){ const rect=wrap.getBoundingClientRect();
           tip.style.left=(ev.clientX-rect.left)+'px'; tip.style.top=(ev.clientY-rect.top)+'px';
           tip.innerHTML=`<div class="t">${CM.flag(o.key)} ${o.cn}</div>`+(s?`记录 ${s.count} 杯 · 均分 ${s.avg.toFixed(1)} 分`:'尚无记录 · 点击了解');
-          tip.style.opacity=1;
-        })
+          tip.style.opacity=1; })
         .on('mouseleave',()=>tip.style.opacity=0)
         .on('click',()=> onSelect(o.key));
-      if(s && s.count>0){
-        g.append('circle').attr('cx',p[0]).attr('cy',p[1]).attr('r',rad).attr('fill','none')
-          .attr('stroke','#3a241a').attr('stroke-width',1).attr('opacity',.4)
-          .append('animate').attr('attributeName','r').attr('from',rad).attr('to',rad+9)
-          .attr('dur','2.4s').attr('repeatCount','indefinite');
-      }
     });
 
-    // legend
-    const leg=document.createElement('div'); leg.className='map-legend';
-    leg.innerHTML=`<div>${metric==='avg'?'平均风味评分':'品鉴杯数'}</div>
-      <div class="bar"></div><div class="ends"><span>少 / 低</span><span>多 / 高</span></div>`;
-    wrap.appendChild(leg);
+    // 图例：移到地图外、缩小
+    const leg=document.createElement('div'); leg.className='map-legend-out';
+    leg.innerHTML=`<span>每个产地一种颜色</span><span class="bar2"></span><span>深浅 = ${metric==='avg'?'评分':'杯数'}（越深越多）</span>`;
+    container.appendChild(leg);
     return wrap;
   }
 

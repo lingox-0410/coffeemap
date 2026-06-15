@@ -152,7 +152,7 @@ img{ max-width:100%; display:block; }
 .map-wrap{ position:relative; border-radius:var(--radius); overflow:hidden; background:linear-gradient(180deg,#fff,#f7f7fa);
   border:1px solid var(--hairline); box-shadow:var(--shadow); }
 #map svg{ width:100%; height:auto; display:block; }
-.country{ fill:#ececf0; stroke:#fff; stroke-width:.4px; transition:fill .3s, transform .2s; cursor:default; }
+.country{ stroke:#fff; stroke-width:.4px; transition:fill .3s, transform .2s; cursor:default; }
 .country.coffee{ cursor:pointer; }
 .country.coffee:hover{ filter:brightness(1.04); }
 .country.sel{ stroke:var(--ink); stroke-width:1.1px; }
@@ -170,6 +170,8 @@ img{ max-width:100%; display:block; }
   background:linear-gradient(90deg,#f0e7da,#d9a441,#a9733f,#5e3a1e); }
 .map-legend .ends{ display:flex; justify-content:space-between; }
 .map-controls{ position:absolute; right:16px; top:16px; display:flex; gap:6px; }
+.map-legend-out{ display:flex; align-items:center; gap:10px; flex-wrap:wrap; font-size:12px; color:var(--ink-2); padding:12px 6px 0; }
+.map-legend-out .bar2{ width:84px; height:8px; border-radius:5px; display:inline-block; background:linear-gradient(90deg,#efe6d6,#cf9a4e,#5e3a1e); }
 
 /* ---------------- Record cards ---------------- */
 .cards{ grid-template-columns:repeat(auto-fill,minmax(310px,1fr)); }

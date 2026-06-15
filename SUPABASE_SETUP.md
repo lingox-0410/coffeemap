@@ -52,11 +52,12 @@ create index if not exists records_user_idx on public.records (user_id, updated_
 > 邮箱登录(Email)默认就是开启的，无需额外操作。免费版用 Supabase 自带邮件发送，**有频率限制、可能进垃圾箱**——个人使用够用；将来量大可在 Authentication → Emails 里接自己的 SMTP。
 
 ## 4. 复制两个值发我
-左侧 **Settings**（齿轮）→ **API**：
-- **Project URL**（形如 `https://abcdefgh.supabase.co`）
-- **Project API keys** 里的 **anon / public** 那一串（很长，以 `eyJ...` 开头）
+左侧 **Settings**（齿轮）→ **API Keys**：
+- **Project URL**（形如 `https://<ref>.supabase.co`；也可从浏览器地址栏的 `project/<ref>` 推出）
+- **Publishable key**（新版密钥，`sb_publishable_...` 开头，标注「safe to use in a browser / can be safely shared publicly」）
+  - 若你的项目是旧版，则用 `Legacy anon, service_role API keys` 标签页里的 **anon**（`eyJ...` 开头），效果一样。
 
-把这两个发我即可。⚠️ 注意：**只发 anon/public 这把**；标着 `service_role` / `secret` 的那把**千万别发、别放进前端**。
+把这两个发我即可。⚠️ **只发 Publishable / anon 这把**；标着 `sb_secret_...` / `service_role` 的那把**千万别发、别放进前端**。
 
 ---
 

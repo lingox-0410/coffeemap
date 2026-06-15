@@ -12,7 +12,7 @@ CM.cloud = (function(){
     if(!window.supabase || !window.supabase.createClient){ console.warn('supabase-js 未加载'); return false; }
     try{
       client = window.supabase.createClient(c.SUPABASE_URL, c.SUPABASE_ANON_KEY, {
-        auth:{ persistSession:true, autoRefreshToken:true, detectSessionInUrl:true, flowType:'pkce' }
+        auth:{ persistSession:true, autoRefreshToken:true, detectSessionInUrl:true, flowType:'implicit' }
       });
       enabled = true;
     }catch(e){ console.error('supabase init 失败', e); enabled=false; }

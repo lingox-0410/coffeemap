@@ -665,21 +665,39 @@ CM.app = (function(){
   }
   function openSignIn(){
     openModal('登录 / 注册', `
-      <p class="muted" style="font-size:14px;line-height:1.6;margin-bottom:18px">输入邮箱，我们会发一封登录链接到你的邮箱，点开即登录——无需密码。同一邮箱首次登录即自动创建账号。登录后你的记录会保存在云端，换设备/换浏览器都能同步。</p>
+      <p class="muted" style="font-size:14px;line-height:1.6;margin-bottom:18px">输入邮箱获取验证码。我们会发一封邮件——<b>直接把邮件里的 6 位验证码填到下面即可登录</b>（推荐，最稳，不用跳转）；也可以点邮件里的登录链接。首次登录即自动创建账号，数据云端同步。</p>
       <div class="field"><label>邮箱</label><input class="input" id="si-email" type="email" placeholder="you@example.com" autocomplete="email"></div>
-      <button class="btn primary" id="si-send" style="width:100%;justify-content:center">${CM.icon('mail',{size:15})} 发送登录链接</button>
+      <button class="btn primary" id="si-send" style="width:100%;justify-content:center">${CM.icon('mail',{size:15})} 发送验证码</button>
+      <div id="si-step2" style="display:none">
+        <div class="field" style="margin-top:18px"><label>邮箱验证码（6 位数字）</label><input class="input" id="si-code" inputmode="numeric" autocomplete="one-time-code" maxlength="6" placeholder="例如 123456" style="letter-spacing:4px;font-size:18px;text-align:center"></div>
+        <button class="btn dark" id="si-verify" style="width:100%;justify-content:center">验证并登录</button>
+      </div>
       <div id="si-msg" class="center mt16" style="font-size:13px;color:var(--ink-2)"></div>
-    `,{onMount:(body)=>{
-      const email=body.querySelector('#si-email'), btn=body.querySelector('#si-send'), msg=body.querySelector('#si-msg');
-      async function send(){ const e=email.value.trim();
-        if(!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(e)){ msg.textContent='请输入有效的邮箱地址'; return; }
-        btn.disabled=true; btn.textContent='发送中…';
-        try{ const {error}=await CM.cloud.signIn(e); if(error) throw error;
-          msg.textContent='登录链接已发送，请到邮箱点击链接完成登录（注意查收垃圾箱）。';
-          btn.textContent='已发送'; }
-        catch(err){ msg.textContent='发送失败：'+(err.message||err); btn.disabled=false; btn.innerHTML=`${CM.icon('mail',{size:15})} 发送登录链接`; }
+    `,{onMount:(body, close)=>{
+      const email=body.querySelector('#si-email'), sendBtn=body.querySelector('#si-send'),
+            step2=body.querySelector('#si-step2'), code=body.querySelector('#si-code'),
+            verifyBtn=body.querySelector('#si-verify'), msg=body.querySelector('#si-msg');
+      const validEmail=()=>/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email.value.trim());
+      async function send(){
+        if(!validEmail()){ msg.textContent='请输入有效的邮箱地址'; return; }
+        sendBtn.disabled=true; sendBtn.textContent='发送中…';
+        try{ const {error}=await CM.cloud.signIn(email.value.trim()); if(error) throw error;
+          msg.textContent='验证码已发送到邮箱（可能在垃圾箱）。把邮件里的 6 位验证码填到下面。';
+          step2.style.display='block'; code.focus();
+          sendBtn.disabled=false; sendBtn.innerHTML=`${CM.icon('mail',{size:15})} 重新发送`;
+        }catch(err){ msg.textContent='发送失败：'+(err.message||err); sendBtn.disabled=false; sendBtn.innerHTML=`${CM.icon('mail',{size:15})} 发送验证码`; }
       }
-      btn.onclick=send; email.addEventListener('keydown',ev=>{ if(ev.key==='Enter') send(); });
+      async function verify(){
+        const t=code.value.trim();
+        if(!/^\d{6}$/.test(t)){ msg.textContent='请输入 6 位数字验证码'; return; }
+        verifyBtn.disabled=true; verifyBtn.textContent='验证中…';
+        try{ const {error}=await CM.cloud.verifyCode(email.value.trim(), t); if(error) throw error;
+          close(); toast('登录成功');
+        }catch(err){ msg.textContent='验证失败：'+(err.message||err)+'（验证码有时效，过期请点上方重新发送）'; verifyBtn.disabled=false; verifyBtn.textContent='验证并登录'; }
+      }
+      sendBtn.onclick=send; verifyBtn.onclick=verify;
+      email.addEventListener('keydown',ev=>{ if(ev.key==='Enter') send(); });
+      code.addEventListener('keydown',ev=>{ if(ev.key==='Enter') verify(); });
       email.focus();
     }});
   }

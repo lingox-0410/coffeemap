@@ -35,8 +35,12 @@ CM.cloud = (function(){
     async signIn(email){
       return client.auth.signInWithOtp({
         email,
-        options:{ emailRedirectTo: location.href.split('#')[0].split('?')[0] }
+        options:{ emailRedirectTo: location.href.split('#')[0].split('?')[0], shouldCreateUser:true }
       });
+    },
+    // 6 位验证码登录（同一浏览器内完成，避开跨浏览器丢登录态）
+    async verifyCode(email, token){
+      return client.auth.verifyOtp({ email, token, type:'email' });
     },
     async signOut(){ return client.auth.signOut(); },
 

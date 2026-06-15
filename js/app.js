@@ -42,14 +42,14 @@ CM.app = (function(){
       <div class="mhead"><h3>${title}</h3><button class="x" aria-label="关闭">${CM.icon('x',{size:16,stroke:2})}</button></div>
       <div class="mbody">${bodyHTML}</div></div>`;
     document.body.appendChild(scrim);
-    const close=()=>{ scrim.classList.remove('show'); setTimeout(()=>scrim.remove(),250); const i=modalStack.indexOf(scrim); if(i>=0)modalStack.splice(i,1); };
+    const close=()=>{ scrim.classList.remove('show'); setTimeout(()=>scrim.remove(),250); const i=modalStack.indexOf(scrim); if(i>=0)modalStack.splice(i,1); document.querySelectorAll('.suggest').forEach(s=>s.remove()); };
     scrim.querySelector('.x').onclick=close;
     scrim.addEventListener('mousedown',e=>{ if(e.target===scrim) close(); });
     modalStack.push(scrim); requestAnimationFrame(()=>scrim.classList.add('show'));
     if(opts.onMount) opts.onMount(scrim.querySelector('.mbody'), close);
     return { el:scrim, body:scrim.querySelector('.mbody'), close };
   }
-  document.addEventListener('keydown',e=>{ if(e.key==='Escape'&&modalStack.length){ const s=modalStack.pop(); s.classList.remove('show'); setTimeout(()=>s.remove(),250); }});
+  document.addEventListener('keydown',e=>{ if(e.key==='Escape'&&modalStack.length){ const s=modalStack.pop(); s.classList.remove('show'); setTimeout(()=>s.remove(),250); document.querySelectorAll('.suggest').forEach(x=>x.remove()); }});
 
   /* ================= 标签输入组件 ================= */
   function tagInput({options=[], value=[], placeholder='', single=false, allowCustom=true, colored=false}){
@@ -85,8 +85,9 @@ CM.app = (function(){
       if(allowCustom&&q&&!options.some(o=>o.label.toLowerCase()===q)) html+=`<div class="opt" data-v="${CM.esc(input.value.trim())}"><span class="em">＋</span><span>添加 “${CM.esc(input.value.trim())}”</span></div>`;
       sug.innerHTML=html;
       const r=el.getBoundingClientRect();
-      sug.style.left=r.left+'px'; sug.style.top=(r.bottom+window.scrollY+6)+'px'; sug.style.width=Math.max(240,r.width)+'px';
+      sug.style.left=r.left+'px'; sug.style.top=(r.bottom+6)+'px'; sug.style.width=Math.max(240,r.width)+'px';
       document.body.appendChild(sug);
+      window.addEventListener('scroll', closeSuggest, {once:true, capture:true});
       sug.querySelectorAll('.opt').forEach(op=> op.onmousedown=e=>{ e.preventDefault(); add(op.dataset.v); });
     }
     input.addEventListener('input',openSuggest);
@@ -562,6 +563,7 @@ CM.app = (function(){
   /* ================= 视图切换 / 刷新 ================= */
   const RENDER={map:renderMap,cards:renderCards,table:renderTable,stats:renderStats,album:renderAlbum,passport:renderPassport};
   function switchView(v){
+    document.querySelectorAll('.suggest').forEach(s=>s.remove());   // 兜底：清掉任何残留下拉浮层
     state.view=v;
     document.querySelectorAll('.tab').forEach(t=>t.classList.toggle('active',t.dataset.v===v));
     document.querySelectorAll('.view').forEach(s=>s.classList.toggle('active',s.id==='view-'+v));

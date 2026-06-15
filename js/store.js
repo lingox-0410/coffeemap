@@ -6,34 +6,53 @@ window.CM = window.CM || {};
 CM.store = (function(){
   const KEY = 'coffeemap.records.v1';
   let cache = null;
+  let mode = 'local';            // 'local' = localStorage | 'cloud' = Supabase
 
-  function _read(){
-    if(cache) return cache;
-    try{ cache = JSON.parse(localStorage.getItem(KEY)) || []; }
-    catch(e){ cache = []; }
+  function _ensure(){
+    if(cache === null){
+      if(mode === 'local'){ try{ cache = JSON.parse(localStorage.getItem(KEY)) || []; }catch(e){ cache = []; } }
+      else cache = [];
+    }
     return cache;
   }
-  function _write(){
-    cache.sort((a,b)=> (b.tastedAt||'').localeCompare(a.tastedAt||'') || (b.createdAt-a.createdAt));
-    localStorage.setItem(KEY, JSON.stringify(cache));
+  function _sortDispatch(){
+    cache.sort((a,b)=> (b.tastedAt||'').localeCompare(a.tastedAt||'') || ((b.createdAt||0)-(a.createdAt||0)));
     document.dispatchEvent(new CustomEvent('cm:changed'));
   }
+  function _saveLocal(){ try{ localStorage.setItem(KEY, JSON.stringify(cache)); }catch(e){} }
+  function _cloud(promise){ Promise.resolve(promise).catch(e=>{ console.error('cloud sync',e); document.dispatchEvent(new CustomEvent('cm:cloudError',{detail:e})); }); }
+  function _persistUpsert(rec){ if(mode==='local') _saveLocal(); else _cloud(CM.cloud.upsert(rec)); }
+  function _persistRemove(id){ if(mode==='local') _saveLocal(); else _cloud(CM.cloud.remove(id)); }
+
   return {
-    all(){ return _read().slice(); },
-    get(id){ return _read().find(r=>r.id===id); },
+    get mode(){ return mode; },
+    setMode(m){ mode = m; },
+    loadLocal(){ try{ cache = JSON.parse(localStorage.getItem(KEY)) || []; }catch(e){ cache = []; } },
+    setCache(arr){ cache = (arr||[]).slice(); _sortDispatch(); },   // 云端拉取后填充，不再回写
+
+    all(){ return _ensure().slice(); },
+    get(id){ return _ensure().find(r=>r.id===id); },
     add(rec){
       rec.id = rec.id || CM.uid();
       rec.createdAt = rec.createdAt || Date.now();
-      _read().push(rec); _write(); return rec;
+      _ensure().push(rec); _sortDispatch(); _persistUpsert(rec); return rec;
     },
     update(id, patch){
-      const r = _read().find(x=>x.id===id); if(!r) return;
-      Object.assign(r, patch); _write(); return r;
+      const r = _ensure().find(x=>x.id===id); if(!r) return;
+      Object.assign(r, patch); _sortDispatch(); _persistUpsert(r); return r;
     },
-    remove(id){ cache = _read().filter(r=>r.id!==id); _write(); },
-    replaceAll(arr){ cache = arr.slice(); _write(); },
-    clear(){ cache=[]; localStorage.removeItem(KEY); document.dispatchEvent(new CustomEvent('cm:changed')); },
-    seedIfEmpty(seed){ if(_read().length===0 && seed && seed.length){ cache = seed.slice(); _write(); } }
+    remove(id){ cache = _ensure().filter(r=>r.id!==id); _sortDispatch(); _persistRemove(id); },
+    replaceAll(arr){
+      cache = arr.slice(); _sortDispatch();
+      if(mode==='local') _saveLocal(); else cache.forEach(r=> _cloud(CM.cloud.upsert(r)));
+    },
+    clear(){
+      const ids = _ensure().map(r=>r.id);
+      cache = []; _sortDispatch();
+      if(mode==='local') localStorage.removeItem(KEY);
+      else ids.forEach(id=> _cloud(CM.cloud.remove(id)));
+    },
+    seedIfEmpty(seed){ if(mode==='local' && _ensure().length===0 && seed && seed.length){ cache = seed.slice(); _sortDispatch(); _saveLocal(); } }
   };
 })();
 

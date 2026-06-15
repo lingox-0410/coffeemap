@@ -76,6 +76,10 @@ img{ max-width:100%; display:block; }
 }
 .btn-add:hover{ transform:translateY(-1px); background:#000; box-shadow:0 6px 18px rgba(0,0,0,.18); }
 .btn-add:active{ transform:translateY(0); }
+.acct-btn{ display:inline-flex; align-items:center; gap:6px; padding:7px 12px; border-radius:980px; font-size:13px; font-weight:500; color:var(--ink); background:var(--bg-2); transition:.16s; white-space:nowrap; }
+.acct-btn:hover{ background:#ececef; }
+.acct-btn.on{ color:var(--accent-ink); background:var(--cream); }
+.acct-btn .acct-label{ max-width:96px; overflow:hidden; text-overflow:ellipsis; }
 
 /* ---------------- Layout ---------------- */
 .wrap{ max-width:var(--maxw); margin:0 auto; padding:0 22px; }
@@ -374,9 +378,11 @@ table.detail td .mini-tags{ display:flex; gap:4px; }
   .nav .tabs{ display:none; }
   .nav .btn-add{ display:none; }
   .nav{ padding:0 14px; }
-  .nav .brand{ margin-right:auto; }
+  .nav .brand{ margin-right:8px; }
   .nav .search{ min-width:0; flex:1; max-width:none; }
   .nav .search input{ width:100%; }
+  .acct-btn .acct-label{ display:none; }
+  .acct-btn{ padding:8px; }
   .view{ padding-bottom:120px; }
   footer.wrap{ margin-bottom:70px; }
 }

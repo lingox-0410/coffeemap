@@ -29,6 +29,7 @@
       <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
       <input id="searchInput" type="search" placeholder="搜索产地 / 风味 / 咖啡店…">
     </label>
+    <button class="acct-btn" id="acctBtn" style="display:none"></button>
     <button class="btn-add" id="addBtn">
       <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
       记录一杯 <span style="opacity:.5">·</span> <span id="navCount">0</span>
@@ -68,11 +69,14 @@
   <script src="js/vendor/topojson-client.min.js"></script>
   <script src="js/vendor/world-data.js"></script>
   <script src="js/vendor/html2canvas.min.js"></script>
+  <script src="js/vendor/supabase.min.js"></script>
   <!-- 应用 -->
+  <script src="js/config.js"></script>
   <script src="js/data.js"></script>
   <script src="js/icons.js"></script>
   <script src="js/knowledge-extra.js"></script>
   <script src="js/vendor/img-manifest.js"></script>
+  <script src="js/cloud.js"></script>
   <script src="js/store.js"></script>
   <script src="js/seed.js"></script>
   <script src="js/charts.js"></script>

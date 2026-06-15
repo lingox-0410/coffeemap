@@ -593,8 +593,8 @@ CM.app = (function(){
   function clearAll(){ if(confirm('确定清空所有记录？此操作不可撤销。')){ CM.store.clear(); state.selectedOrigin=null; refresh(); toast('已清空'); } }
 
   /* ================= 初始化 ================= */
+  let booted=false;
   function init(){
-    CM.store.seedIfEmpty(CM.seed);
     // 移动端底部导航（与顶部共用 .tab/data-v，switchView 自动同步高亮）
     const BN=[['map','地图','map'],['cards','卡片','grid'],['table','明细','list'],['stats','统计','chart'],['album','相册','image'],['passport','护照','book']];
     document.getElementById('botnav').innerHTML=BN.map(([v,label,ic])=>`<button class="tab ${v==='map'?'active':''}" data-v="${v}">${CM.icon(ic,{size:22})}<span>${label}</span></button>`).join('');
@@ -611,7 +611,87 @@ CM.app = (function(){
     document.querySelectorAll('.tab').forEach(t=> t.onclick=()=>switchView(t.dataset.v));
     document.getElementById('addBtn').onclick=()=>openForm();
     document.addEventListener('cm:changed',updateCounts);
-    updateCounts(); switchView('map');
+    document.addEventListener('cm:cloudError',()=>toast('云端同步失败，请检查网络'));
+    const ab=document.getElementById('acctBtn'); if(ab) ab.onclick=()=>{ const u=CM.cloud&&CM.cloud.user; if(u) openAccount(u); else openSignIn(); };
+    bootstrap();
+  }
+
+  /* ===== 启动：有云端配置→走账号/同步；否则→本地存储 ===== */
+  async function bootstrap(){
+    if(CM.cloud && CM.cloud.init()){
+      CM.cloud.onChange((session)=> onAuth(session));
+      let session=null; try{ session=await CM.cloud.getSession(); }catch(e){}
+      await onAuth(session);
+    }else{
+      renderAccount(null);              // 云端未启用 → 隐藏账号按钮
+      CM.store.seedIfEmpty(CM.seed);
+      finishBoot();
+    }
+  }
+  async function onAuth(session){
+    const user = session && session.user;
+    if(user){
+      CM.cloud.setUser(user); CM.store.setMode('cloud');
+      try{ CM.store.setCache(await CM.cloud.fetchAll()); }
+      catch(e){ toast('云端读取失败：'+(e.message||e)); CM.store.setCache([]); }
+      await maybeMigrate();
+    }else{
+      CM.cloud.setUser(null); CM.store.setMode('local'); CM.store.loadLocal(); CM.store.seedIfEmpty(CM.seed);
+    }
+    renderAccount(user);
+    finishBoot();
+  }
+  function finishBoot(){ updateCounts(); if(!booted){ booted=true; switchView('map'); } else refresh(); }
+
+  async function maybeMigrate(){
+    let local=[]; try{ local=JSON.parse(localStorage.getItem('coffeemap.records.v1')||'[]'); }catch(e){}
+    const guest=local.filter(r=> r&&r.id&&!/^s\d+$/.test(String(r.id)));
+    if(guest.length && CM.store.all().length===0 && confirm(`检测到本地有 ${guest.length} 条记录，是否上传到你的云端账号？（上传后多设备同步）`)){
+      for(const r of guest){ try{ await CM.cloud.upsert(r); }catch(e){} }
+      try{ CM.store.setCache(await CM.cloud.fetchAll()); }catch(e){}
+      toast(`已上传 ${guest.length} 条到云端`);
+    }
+  }
+
+  /* ===== 账号 UI ===== */
+  function renderAccount(user){
+    const b=document.getElementById('acctBtn'); if(!b) return;
+    if(!(CM.cloud&&CM.cloud.enabled)){ b.style.display='none'; return; }
+    b.style.display='';
+    b.classList.toggle('on', !!user);
+    b.innerHTML = user ? `${CM.icon('user',{size:16})}<span class="acct-label">${CM.esc((user.email||'账号').split('@')[0])}</span>`
+                       : `${CM.icon('user',{size:15})}<span class="acct-label">登录</span>`;
+    b.title = user ? (user.email||'我的账号') : '登录以云端同步';
+  }
+  function openSignIn(){
+    openModal('登录 / 注册', `
+      <p class="muted" style="font-size:14px;line-height:1.6;margin-bottom:18px">输入邮箱，我们会发一封登录链接到你的邮箱，点开即登录——无需密码。同一邮箱首次登录即自动创建账号。登录后你的记录会保存在云端，换设备/换浏览器都能同步。</p>
+      <div class="field"><label>邮箱</label><input class="input" id="si-email" type="email" placeholder="you@example.com" autocomplete="email"></div>
+      <button class="btn primary" id="si-send" style="width:100%;justify-content:center">${CM.icon('mail',{size:15})} 发送登录链接</button>
+      <div id="si-msg" class="center mt16" style="font-size:13px;color:var(--ink-2)"></div>
+    `,{onMount:(body)=>{
+      const email=body.querySelector('#si-email'), btn=body.querySelector('#si-send'), msg=body.querySelector('#si-msg');
+      async function send(){ const e=email.value.trim();
+        if(!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(e)){ msg.textContent='请输入有效的邮箱地址'; return; }
+        btn.disabled=true; btn.textContent='发送中…';
+        try{ const {error}=await CM.cloud.signIn(e); if(error) throw error;
+          msg.textContent='登录链接已发送，请到邮箱点击链接完成登录（注意查收垃圾箱）。';
+          btn.textContent='已发送'; }
+        catch(err){ msg.textContent='发送失败：'+(err.message||err); btn.disabled=false; btn.innerHTML=`${CM.icon('mail',{size:15})} 发送登录链接`; }
+      }
+      btn.onclick=send; email.addEventListener('keydown',ev=>{ if(ev.key==='Enter') send(); });
+      email.focus();
+    }});
+  }
+  function openAccount(user){
+    openModal('我的账号', `
+      <div class="flex gap12" style="align-items:center;margin-bottom:20px">
+        <div style="width:48px;height:48px;border-radius:50%;background:var(--bg-2);display:flex;align-items:center;justify-content:center;color:var(--accent)">${CM.icon('user',{size:24})}</div>
+        <div><div style="font-weight:600">${CM.esc(user.email||'已登录')}</div>
+          <div class="muted" style="font-size:12.5px;display:flex;align-items:center;gap:5px;margin-top:2px">${CM.icon('cloud',{size:13})} 云端同步中 · ${CM.store.all().length} 条记录</div></div>
+      </div>
+      <button class="btn ghost" id="ac-out" style="width:100%;justify-content:center">${CM.icon('logout',{size:15})} 退出登录</button>
+    `,{onMount:(body,close)=>{ body.querySelector('#ac-out').onclick=async()=>{ try{ await CM.cloud.signOut(); }catch(e){} close(); toast('已退出登录'); }; }});
   }
 
   return { init, switchView, openForm, openRecord, editRecord:id=>openForm({},id), deleteRecord:id=>{ if(confirm('删除这条记录？')){CM.store.remove(id); while(modalStack.length){const s=modalStack.pop();s.classList.remove('show');setTimeout(()=>s.remove(),250);} refresh(); toast('已删除');} },

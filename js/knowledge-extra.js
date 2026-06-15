@@ -1,0 +1,101 @@
+/* ============================================================================
+ * CoffeeMap · 知识卡片扩展内容 (knowledge-extra.js)
+ * 为每个标签补充：典型风味 taste · 要点 facts · 品鉴/冲煮建议 tip
+ * 以 `<type>_<id>` 为键，渲染时与 data.js 的基础条目合并
+ * ==========================================================================*/
+window.CM = window.CM || {};
+CM.extra = {
+  /* ---------- 产区 ---------- */
+  origin_Ethiopia:{taste:'水洗：柑橘·佛手柑·茉莉；日晒：蓝莓·草莓·发酵酒香',facts:['阿拉比卡的基因宝库，原生种数以千计','以「水洗站」收购小农咖啡果集中处理','分级 G1–G2 看瑕疵率（非杯测分）']},
+  origin_Kenya:{taste:'黑加仑·番茄·莓果，高酸多汁',facts:['SL28/SL34 + 双重水洗(K72) 是风味密码','分级 AA/AB 只代表豆目大小，非品质','富磷火山土造就标志性酸质']},
+  origin_Colombia:{taste:'焦糖·红苹果·柑橘，均衡甜润',facts:['安第斯山南北跨度大，全年皆有收成','主推卡斯蒂洛/卡杜拉等抗病种','FNC 国家咖啡体系成熟']},
+  origin_Brazil:{taste:'坚果·巧克力·花生甜，低酸醇厚',facts:['全球第一大产国，机械化程度高','半日晒(Pulped Natural)的发源地','意式拼配的黄金基底']},
+  origin_Panama:{taste:'茉莉·佛手柑·白桃·红茶',facts:['BOP 竞拍把瑰夏推上神坛','火山土+高海拔+海洋气候','常按品种独立批次拍卖']},
+  origin_Guatemala:{taste:'可可·焦糖·明亮果酸，烟熏矿物感',facts:['八大产区风土各异','安提瓜火山灰土壤蓄水保肥','Anacafé 体系完善']},
+  'origin_Costa Rica':{taste:'蜂蜜·柑橘·红色水果，干净甜亮',facts:['蜜处理(Honey)的发扬地','微处理厂(Micro-mill)革命起点','法律禁种罗布斯塔，专注精品']},
+  origin_Honduras:{taste:'焦糖·太妃糖·温和果酸',facts:['中美洲新晋产量大户','IHCAFE 推动品质升级','性价比突出']},
+  'origin_El Salvador':{taste:'焦糖·红苹果，柔顺奶油口感',facts:['帕卡马拉品种的发源地','波旁古种保存良好']},
+  origin_Nicaragua:{taste:'巧克力·焦糖·柔和果酸',facts:['大颗粒品种(帕卡马拉/象豆)常见']},
+  origin_Peru:{taste:'坚果·巧克力·柔甜',facts:['有机认证大国','高海拔小农为主，干净温和']},
+  origin_Mexico:{taste:'坚果·太妃糖·清淡可可',facts:['有机水洗产量大','恰帕斯与危地马拉风土相邻']},
+  origin_Bolivia:{taste:'花香·焦糖·温润果酸',facts:['产量稀少的潜力股','Yungas 河谷高海拔种植']},
+  origin_Ecuador:{taste:'花香·柑橘，干净细腻',facts:['Sidra / Typica Mejorado 等明星种崛起','赤道高海拔']},
+  origin_Jamaica:{taste:'温和顺滑·酸甜平衡，几乎无苦',facts:['蓝山(Blue Mountain)有严格认证','传统以木桶装运']},
+  origin_Indonesia:{taste:'雪松·木质·黑巧·泥土，低酸醇厚',facts:['湿刨法(Giling Basah) 造就蓝绿生豆','曼特宁=苏门答腊的代名词','适合中深烘与法压']},
+  origin_India:{taste:'低酸·辛香·陈木',facts:['季风处理(Monsooned Malabar)世界独有','也产优质水洗与罗布斯塔']},
+  origin_Vietnam:{taste:'浓苦厚重（罗布斯塔为主）',facts:['世界第二大产国','滴漏炼乳咖啡是文化名片']},
+  origin_China:{taste:'坚果·焦糖·渐显花果酸',facts:['云南普洱/保山/临沧为核心产区','近年厌氧/水洗处理快速进步']},
+  'origin_Papua New Guinea':{taste:'热带水果·草本，醇厚多汁',facts:['小农园(Garden coffee)模式','Sigri 等庄园知名']},
+  origin_Yemen:{taste:'红酒·香料·果干·巧克力，狂野深邃',facts:['最古老的商业咖啡产地','梯田种植 + 传统古法日晒','「摩卡」即得名于其出海港']},
+  origin_Rwanda:{taste:'红茶·橙子·花香，干净',facts:['千丘之国，波旁为主','水洗站精细处理']},
+  origin_Burundi:{taste:'黑醋栗·橙花·红茶',facts:['与卢旺达风味相近','小农 + 水洗站模式']},
+  origin_Tanzania:{taste:'黑加仑·柑橘·花香',facts:['乞力马扎罗山脚','常以 AA 分级，被誉「非洲绅士」']},
+  origin_Uganda:{taste:'葡萄·红茶·明亮（水洗阿拉比卡）',facts:['兼产本土罗布斯塔','艾尔贡山产区崛起']},
+
+  /* ---------- 豆种 ---------- */
+  variety_typica:{facts:['几乎所有栽培种的母本','产量低、抗病弱，但风味优雅干净','蓝山、科纳皆为其血统']},
+  variety_bourbon:{facts:['铁皮卡的自然突变','有红/黄/粉波旁三色','甜感与醇厚度的标杆']},
+  variety_geisha:{facts:['源自埃塞 Gesha 村，1960s 引入中美洲','2004 翡翠庄园竞赛一战封神','细长豆形，极致花香与茶感']},
+  variety_sl28:{facts:['1930s 肯尼亚 Scott Labs 选育','耐旱深根，老树风味更佳','黑加仑酸甜是其标志']},
+  variety_sl34:{facts:['与 SL28 同源，更耐高海拔降雨','果汁感饱满']},
+  variety_caturra:{facts:['1937 巴西发现的波旁矮株突变','高产、易管理','明亮酸质']},
+  variety_catuai:{facts:['新世界 × 卡杜拉','抗风、植株紧凑','均衡稳定']},
+  variety_catimor:{facts:['含罗布斯塔血统（提莫杂交）','高抗叶锈病、高产','风味相对朴实']},
+  variety_castillo:{facts:['哥伦比亚 Cenicafé 选育','抗病高产，现代主力','近年品质大幅提升']},
+  variety_pacamara:{facts:['帕卡斯 × 象豆（萨尔瓦多）','豆粒超大','奔放草本与热带果香']},
+  variety_pacas:{facts:['波旁在萨尔瓦多的矮株突变','干净甜感']},
+  variety_maragogipe:{facts:['铁皮卡的超大豆突变','俗称「象豆」','温和柔顺、酒体轻盈']},
+  variety_mundonovo:{facts:['波旁 × 苏门答腊铁皮卡','巴西主力','醇厚高产']},
+  variety_heirloom:{facts:['埃塞俄比亚古老地方种统称','基因极度多样','复杂花果香之源']},
+  variety_sidra:{facts:['厄瓜多尔/哥伦比亚明星种','干净花香与柑橘','竞赛常客']},
+  variety_pinkbourbon:{facts:['红、黄波旁自然杂交','果实呈粉色','花香+热带近年大热']},
+  variety_wushwush:{facts:['埃塞稀有种','浓郁热带与丝滑茶感']},
+  variety_ruiru11:{facts:['肯尼亚抗病高产新种','兼顾风味与抗病']},
+
+  /* ---------- 处理法 ---------- */
+  process_washed:{facts:['发酵去果胶 → 清洗 → 干燥','最能体现风土与品种','耗水量大'],tip:'浅中烘 + 手冲，凸显酸质与层次'},
+  process_natural:{facts:['带果肉整颗日晒','果香与甜感最饱满','需频繁翻动控发酵'],tip:'水温略低、研磨略粗，避免过萃发酵感'},
+  process_honey:{facts:['保留部分果胶带壳干燥','白/黄/红/黑蜜 = 果胶保留递增','甜感圆润、酸度柔和'],tip:'中浅烘最讨喜，甜酸平衡'},
+  process_redhoney:{facts:['保留较多果胶、慢干','发酵更深，红果与焦糖更浓'],tip:'中烘，醇厚甜润'},
+  process_blackhoney:{facts:['果胶保留最多、干燥最慢','风味最接近日晒'],tip:'慢萃留住厚甜'},
+  process_wethulled:{facts:['印尼传统 Giling Basah','半干带壳脱壳，生豆蓝绿','低酸醇厚'],tip:'法压 / 中深烘，木质草本'},
+  process_anaerobic:{facts:['密闭无氧环境控制发酵','创造肉桂/荔枝/酒感等奇异风味','现代精品的实验场'],tip:'风味强烈，建议浅烘单品细品'},
+  process_carbonic:{facts:['借鉴葡萄酒的 CO₂ 浸渍','果味集中而干净'],tip:'低温慢萃，留住果香'},
+  process_doubleferment:{facts:['两段不同条件发酵','层次与发酵香更复杂']},
+  process_raisin:{facts:['延长脱水，糖分高度浓缩','葡萄干/红枣般厚重甜']},
+
+  /* ---------- 烘焙度 ---------- */
+  roast_light:{facts:['一爆初期~密集','保留最多产地风味与酸质','适合花果调单品'],tip:'手冲为主，水温 90–94℃'},
+  roast_mediumlight:{facts:['一爆结束前后','酸甜平衡，最百搭'],tip:'手冲通用，88–93℃'},
+  roast_medium:{facts:['一爆后充分发展','焦糖甜上升、酸收敛'],tip:'手冲 / 聪明杯皆宜'},
+  roast_mediumdark:{facts:['接近二爆','巧克力坚果，油脂初现'],tip:'意式 / 法压 / 奶咖友好'},
+  roast_dark:{facts:['二爆中后段','焦苦与油脂，低酸'],tip:'意式浓缩与拼配的经典风格'},
+
+  /* ---------- 冲煮 ---------- */
+  brew_v60:{facts:['锥形 + 螺旋肋骨，流速快','凸显层次与明亮酸质'],tip:'粉水比 1:15~16，中细研磨，90–93℃，约 2:30'},
+  brew_kalita:{facts:['平底三孔，萃取均匀稳定','容错率高'],tip:'1:15，分段注水，2:30–3:00'},
+  brew_chemex:{facts:['厚滤纸过滤油脂','极致干净顺滑'],tip:'1:16，研磨略粗，3:30–4:30'},
+  brew_origami:{facts:['可配锥形或波浪滤纸','兼具层次与均匀'],tip:'按滤纸调整，约 1:15'},
+  brew_aeropress:{facts:['气压辅助浸泡萃取','便携、风格多变'],tip:'正/反压皆可，1:13~16，短时萃取'},
+  brew_frenchpress:{facts:['金属滤网全浸泡','保留油脂、口感厚重'],tip:'1:15，粗研磨，浸泡 4 分钟'},
+  brew_espresso:{facts:['9 bar 高压萃取','油脂 Crema 丰富'],tip:'约 1:2（18–20g→36–40g），25–32 秒'},
+  brew_moka:{facts:['炉上蒸汽压力萃取','浓郁近似浓缩'],tip:'小火，听到咕噜声即离火'},
+  brew_coldbrew:{facts:['冷水 12–24h 浸泡','低酸顺滑、高甜'],tip:'1:8~10 做浓缩，再兑水或冰'},
+  brew_siphon:{facts:['蒸汽与负压循环萃取','仪式感、香气张扬'],tip:'1:15，控制热源与搅拌'},
+  brew_clever:{facts:['浸泡 + 过滤结合','稳定、新手友好'],tip:'1:15，焖 2~3 分钟再开阀'},
+
+  /* ---------- 风味 ---------- */
+  flavor_floral:{facts:['高海拔 + 精细处理的产物','瑰夏、埃塞水洗常见','代表优雅与高级感']},
+  flavor_berry:{facts:['日晒与肯尼亚豆的招牌','明亮酸甜、多汁']},
+  flavor_citrus:{facts:['水洗豆活泼酸质的核心','常与花香相伴']},
+  flavor_stonefruit:{facts:['优质水洗 / 蜜处理','甜润圆润、质地饱满']},
+  flavor_tropical:{facts:['厌氧 / 日晒常见','奔放浓烈、辨识度高']},
+  flavor_driedfruit:{facts:['深度脱水与发酵','日晒、也门豆的特征']},
+  flavor_caramel:{facts:['烘焙梅纳反应的产物','咖啡的「骨架甜」','中焙尤为突出']},
+  flavor_chocolate:{facts:['巴西、中深焙、意式标志','温暖醇厚的余韵']},
+  flavor_nutty:{facts:['干香温润','常与可可、焦糖结伴']},
+  flavor_spice:{facts:['印度、也门、厌氧处理','增添复杂与异域感']},
+  flavor_fermented:{facts:['发酵处理的产物','适度迷人、过度成瑕','厌氧豆的双刃剑']},
+  flavor_herbal:{facts:['瑰夏与高海拔水洗的优雅尾韵','清雅、干净']},
+  flavor_roasted:{facts:['深烘的烟熏与谷物香','意式风格的底色']},
+};

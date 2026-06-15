@@ -665,39 +665,38 @@ CM.app = (function(){
   }
   function openSignIn(){
     openModal('登录 / 注册', `
-      <p class="muted" style="font-size:14px;line-height:1.6;margin-bottom:18px">输入邮箱获取验证码。我们会发一封邮件——<b>直接把邮件里的 6 位验证码填到下面即可登录</b>（推荐，最稳，不用跳转）；也可以点邮件里的登录链接。首次登录即自动创建账号，数据云端同步。</p>
+      <p class="muted" style="font-size:14px;line-height:1.6;margin-bottom:18px">用<b>邮箱 + 密码</b>登录，换任何设备/浏览器用同一组邮箱密码即可同步。<b>第一次用请点「注册」</b>设置密码；之后用「登录」。</p>
       <div class="field"><label>邮箱</label><input class="input" id="si-email" type="email" placeholder="you@example.com" autocomplete="email"></div>
-      <button class="btn primary" id="si-send" style="width:100%;justify-content:center">${CM.icon('mail',{size:15})} 发送验证码</button>
-      <div id="si-step2" style="display:none">
-        <div class="field" style="margin-top:18px"><label>邮箱验证码（6 位数字）</label><input class="input" id="si-code" inputmode="numeric" autocomplete="one-time-code" maxlength="6" placeholder="例如 123456" style="letter-spacing:4px;font-size:18px;text-align:center"></div>
-        <button class="btn dark" id="si-verify" style="width:100%;justify-content:center">验证并登录</button>
+      <div class="field"><label>密码（至少 6 位）</label><input class="input" id="si-pw" type="password" placeholder="设置或输入密码" autocomplete="current-password"></div>
+      <div class="flex gap12">
+        <button class="btn primary" id="si-login" style="flex:1;justify-content:center">登录</button>
+        <button class="btn ghost" id="si-reg" style="flex:1;justify-content:center">注册</button>
       </div>
       <div id="si-msg" class="center mt16" style="font-size:13px;color:var(--ink-2)"></div>
     `,{onMount:(body, close)=>{
-      const email=body.querySelector('#si-email'), sendBtn=body.querySelector('#si-send'),
-            step2=body.querySelector('#si-step2'), code=body.querySelector('#si-code'),
-            verifyBtn=body.querySelector('#si-verify'), msg=body.querySelector('#si-msg');
-      const validEmail=()=>/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email.value.trim());
-      async function send(){
-        if(!validEmail()){ msg.textContent='请输入有效的邮箱地址'; return; }
-        sendBtn.disabled=true; sendBtn.textContent='发送中…';
-        try{ const {error}=await CM.cloud.signIn(email.value.trim()); if(error) throw error;
-          msg.textContent='验证码已发送到邮箱（可能在垃圾箱）。把邮件里的 6 位验证码填到下面。';
-          step2.style.display='block'; code.focus();
-          sendBtn.disabled=false; sendBtn.innerHTML=`${CM.icon('mail',{size:15})} 重新发送`;
-        }catch(err){ msg.textContent='发送失败：'+(err.message||err); sendBtn.disabled=false; sendBtn.innerHTML=`${CM.icon('mail',{size:15})} 发送验证码`; }
+      const email=body.querySelector('#si-email'), pw=body.querySelector('#si-pw'),
+            loginBtn=body.querySelector('#si-login'), regBtn=body.querySelector('#si-reg'),
+            msg=body.querySelector('#si-msg');
+      const valid=()=> /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email.value.trim()) && pw.value.length>=6;
+      function humanize(e){ const m=(e&&e.message)||String(e);
+        if(/already registered|exists/i.test(m)) return '该邮箱已注册，请直接「登录」';
+        if(/invalid login|credentials/i.test(m)) return '邮箱或密码不正确';
+        if(/at least 6/i.test(m)) return '密码至少 6 位';
+        return m; }
+      async function login(){ if(!valid()){ msg.textContent='请输入邮箱和至少 6 位密码'; return; }
+        loginBtn.disabled=true; loginBtn.textContent='登录中…';
+        try{ const {error}=await CM.cloud.signInPassword(email.value.trim(), pw.value); if(error) throw error; close(); toast('登录成功'); }
+        catch(e){ msg.textContent='登录失败：'+humanize(e)+'（没有账号请点「注册」）'; loginBtn.disabled=false; loginBtn.textContent='登录'; }
       }
-      async function verify(){
-        const t=code.value.trim();
-        if(!/^\d{6}$/.test(t)){ msg.textContent='请输入 6 位数字验证码'; return; }
-        verifyBtn.disabled=true; verifyBtn.textContent='验证中…';
-        try{ const {error}=await CM.cloud.verifyCode(email.value.trim(), t); if(error) throw error;
-          close(); toast('登录成功');
-        }catch(err){ msg.textContent='验证失败：'+(err.message||err)+'（验证码有时效，过期请点上方重新发送）'; verifyBtn.disabled=false; verifyBtn.textContent='验证并登录'; }
+      async function register(){ if(!valid()){ msg.textContent='请输入邮箱和至少 6 位密码'; return; }
+        regBtn.disabled=true; regBtn.textContent='注册中…';
+        try{ const {data,error}=await CM.cloud.signUp(email.value.trim(), pw.value); if(error) throw error;
+          if(data && data.session){ close(); toast('注册成功，已登录'); }
+          else { msg.textContent='注册成功，但项目仍开着「邮箱确认」。请到 Supabase 关闭 Confirm email 后，再点「登录」。'; regBtn.disabled=false; regBtn.textContent='注册'; }
+        }catch(e){ msg.textContent='注册失败：'+humanize(e); regBtn.disabled=false; regBtn.textContent='注册'; }
       }
-      sendBtn.onclick=send; verifyBtn.onclick=verify;
-      email.addEventListener('keydown',ev=>{ if(ev.key==='Enter') send(); });
-      code.addEventListener('keydown',ev=>{ if(ev.key==='Enter') verify(); });
+      loginBtn.onclick=login; regBtn.onclick=register;
+      pw.addEventListener('keydown',ev=>{ if(ev.key==='Enter') login(); });
       email.focus();
     }});
   }

@@ -38,10 +38,13 @@ CM.cloud = (function(){
         options:{ emailRedirectTo: location.href.split('#')[0].split('?')[0], shouldCreateUser:true }
       });
     },
-    // 6 位验证码登录（同一浏览器内完成，避开跨浏览器丢登录态）
+    // 6 位验证码登录（需自定义 SMTP 才能在邮件里显示验证码）
     async verifyCode(email, token){
       return client.auth.verifyOtp({ email, token, type:'email' });
     },
+    // 邮箱 + 密码（最稳：不依赖收邮件、不跨浏览器）
+    async signUp(email, password){ return client.auth.signUp({ email, password }); },
+    async signInPassword(email, password){ return client.auth.signInWithPassword({ email, password }); },
     async signOut(){ return client.auth.signOut(); },
 
     // 取当前用户全部记录（RLS 保证只返回本人数据）

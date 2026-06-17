@@ -623,7 +623,13 @@ CM.app = (function(){
     document.getElementById('addBtn').onclick=()=>openForm();
     document.addEventListener('cm:changed',updateCounts);
     let _ceT=0; document.addEventListener('cm:cloudError',()=>{ const n=Date.now(); if(n-_ceT>8000){ _ceT=n; toast('网络波动，已暂存本地，联网后自动同步'); } });
-    window.addEventListener('online',()=>{ try{ CM.store.flushQueue(); }catch(e){} });
+    window.addEventListener('online', async ()=>{
+      if(CM.cloud && CM.cloud.configured() && !CM.cloud.user){
+        let s=null; try{ s=await CM.cloud.autoLogin(); }catch(e){}
+        if(s && s.user){ await onAuth(s); return; }     // 联网后自动重登→onAuth 会 flushQueue 补传
+      }
+      try{ CM.store.flushQueue(); }catch(e){}
+    });
     const ab=document.getElementById('acctBtn'); if(ab) ab.onclick=async()=>{
       if(CM.cloud && CM.cloud.configured() && !CM.cloud.enabled){
         const ok=await CM.cloud.ensureReady();
@@ -648,6 +654,7 @@ CM.app = (function(){
     if(ok){
       CM.cloud.onChange((session)=> onAuth(session));
       let session=null; try{ session=await CM.cloud.getSession(); }catch(e){}
+      if(!(session && session.user)){ try{ session=await CM.cloud.autoLogin(); }catch(e){} }   // SDK 会话刷新后丢失→用本地凭证自动重登，保证保持登录、写入能同步
       if(session && session.user){ await onAuth(session); return; }
     }
     // 无有效会话（或 SDK 没起来）：若曾登录过，回放该用户的本地镜像——绝不退回示例数据，绝不丢数据
@@ -701,10 +708,8 @@ CM.app = (function(){
     refresh(); return ok;
   }
   async function maybeMigrate(){
-    const pending=pendingLocal();
-    if(pending.length && confirm(`检测到本地有 ${pending.length} 条未同步到云端的记录，是否现在上传？（上传后多设备同步）`)){
-      const n=await uploadRecords(pending); toast(`已上传 ${n} 条到云端`);
-    }
+    const pending=pendingLocal();                 // 本地(访客期)未同步的记录，登录后自动上云，不用弹窗打断
+    if(pending.length){ const n=await uploadRecords(pending); if(n) toast(`已把本地 ${n} 条记录同步到云端`); }
   }
   async function syncLocal(){
     if(!(CM.cloud&&CM.cloud.user)){ toast('请先登录'); return; }

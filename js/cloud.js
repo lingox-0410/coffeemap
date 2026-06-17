@@ -5,6 +5,14 @@
 window.CM = window.CM || {};
 CM.cloud = (function(){
   let client=null, enabled=false, user=null;
+  // 内存串行锁替代 navigator.locks：既避免华为/夸克 webview 上 Web Locks 卡死，又避免“无锁”导致的 auth 并发损坏/卡死
+  let _lockChain = Promise.resolve();
+  const memLock = (name, acquireTimeout, fn)=>{ const run=_lockChain.then(()=>fn()); _lockChain=run.then(()=>{},()=>{}); return run; };
+  // 本地保存凭证(混淆)用于刷新后自动重登——某些 webview 上 SDK 会话不跨刷新，自动重登保证保持登录、写入能同步
+  const CRED='coffeemap.cred';
+  const _saveCred=(e,p)=>{ try{ localStorage.setItem(CRED, btoa(unescape(encodeURIComponent(JSON.stringify({e,p}))))); }catch(x){} };
+  const _getCred =()=>{ try{ const s=localStorage.getItem(CRED); return s?JSON.parse(decodeURIComponent(escape(atob(s)))):null; }catch(x){ return null; } };
+  const _clearCred=()=>{ try{ localStorage.removeItem(CRED); }catch(x){} };
 
   function init(){
     const c = window.CM_CONFIG || {};
@@ -13,8 +21,8 @@ CM.cloud = (function(){
     try{
       client = window.supabase.createClient(c.SUPABASE_URL, c.SUPABASE_ANON_KEY, {
         auth:{ persistSession:true, autoRefreshToken:true, detectSessionInUrl:true, flowType:'implicit',
-          // 用无锁实现取代默认的 navigator.locks —— 某些 webview(华为/夸克)上它会卡死 auth 调用(登录/登出/取会话)
-          lock:(name, acquireTimeout, fn)=> Promise.resolve(fn()) }
+          // 用内存串行锁取代默认 navigator.locks（后者在华为/夸克 webview 会卡死 auth 调用）
+          lock: memLock }
       });
       enabled = true;
     }catch(e){ console.error('supabase init 失败', e); enabled=false; }
@@ -51,6 +59,13 @@ CM.cloud = (function(){
       const { data } = await client.auth.getSession();
       return data ? data.session : null;
     },
+    // 刷新后 SDK 会话丢失时，用本地保存的凭证自动重登（signInWithPassword 稳定、不像 setSession 会卡）
+    hasCred(){ return !!_getCred(); },
+    async autoLogin(){
+      const c=_getCred(); if(!c||!c.e||!c.p) return null;
+      try{ const r=await client.auth.signInWithPassword({ email:c.e, password:c.p }); if(r.error) throw r.error; return r.data ? r.data.session : null; }
+      catch(e){ console.warn('autoLogin', e); return null; }
+    },
     onChange(cb){ if(client) client.auth.onAuthStateChange((_evt, session)=> cb(session)); },
 
     async signIn(email){
@@ -63,13 +78,14 @@ CM.cloud = (function(){
     async verifyCode(email, token){
       return client.auth.verifyOtp({ email, token, type:'email' });
     },
-    // 邮箱 + 密码（最稳：不依赖收邮件、不跨浏览器）
-    async signUp(email, password){ return client.auth.signUp({ email, password }); },
-    async signInPassword(email, password){ return client.auth.signInWithPassword({ email, password }); },
-    // 先同步清掉本地会话(最关键、绝不阻塞)，再尽力调用 SDK(带超时，hang 也不影响)
+    // 邮箱 + 密码（最稳：不依赖收邮件、不跨浏览器）；成功即保存凭证供刷新后自动重登
+    async signUp(email, password){ const r=await client.auth.signUp({ email, password }); if(!r.error && r.data && r.data.session) _saveCred(email,password); return r; },
+    async signInPassword(email, password){ const r=await client.auth.signInWithPassword({ email, password }); if(!r.error) _saveCred(email,password); return r; },
+    // 先同步清掉本地会话与凭证(最关键、绝不阻塞)，再尽力调用 SDK(带超时，hang 也不影响)
     async signOut(scope='local'){
       user=null;
       try{
+        _clearCred(); localStorage.removeItem('coffeemap.sess');
         [localStorage, sessionStorage].forEach(st=>{
           const ks=[]; for(let i=0;i<st.length;i++){ const k=st.key(i); if(k && /sb-.*-auth-token/.test(k)) ks.push(k); }
           ks.forEach(k=>st.removeItem(k));

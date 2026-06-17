@@ -52,9 +52,45 @@ CM.app = (function(){
   document.addEventListener('keydown',e=>{ if(e.key==='Escape'&&modalStack.length){ const s=modalStack.pop(); s.classList.remove('show'); setTimeout(()=>s.remove(),250); document.querySelectorAll('.suggest').forEach(x=>x.remove()); }});
 
   /* ================= 标签输入组件 ================= */
-  function tagInput({options=[], value=[], placeholder='', single=false, allowCustom=true, colored=false}){
-    const el=document.createElement('div'); el.className='taginput'; el.tabIndex=0;
-    const input=document.createElement('input'); input.placeholder=placeholder;
+  /* 选择面板：点按弹出（不自动聚焦搜索→不弹软键盘），选项大目标、可滚动；长列表/可自定义才显示顶部搜索框 */
+  function openPicker({title, options=[], multi=false, selected=[], allowCustom=false, onChange}){
+    let sel = new Set(selected);
+    const needSearch = options.length>12 || allowCustom;
+    const body = `
+      ${needSearch?`<input class="input pk-q" id="pk-q" placeholder="搜索…" autocomplete="off">`:''}
+      <div class="picker-list" id="pk-list"></div>
+      ${multi?`<button class="btn dark" id="pk-done" style="width:100%;justify-content:center;margin-top:14px">完成 · 已选 <span id="pk-n">${sel.size}</span></button>`:''}`;
+    openModal(title, body, { onMount:(b, close)=>{
+      const q=b.querySelector('#pk-q'), list=b.querySelector('#pk-list');
+      const commit=()=>{ if(onChange) onChange([...sel]); };
+      function render(){
+        const kw=(q&&q.value.trim().toLowerCase())||'';
+        const groups={};
+        options.filter(o=> !kw || o.label.toLowerCase().includes(kw) || (o.group||'').toLowerCase().includes(kw))
+          .forEach(o=>{ (groups[o.group||'']=groups[o.group||'']||[]).push(o); });
+        let html='';
+        Object.keys(groups).forEach(g=>{ if(g) html+=`<div class="picker-grp">${CM.esc(g)}</div>`;
+          groups[g].forEach(o=>{ const on=sel.has(o.value);
+            html+=`<div class="picker-opt${on?' on':''}" data-v="${CM.esc(o.value)}">${optVis(o)}<span class="pk-label">${CM.esc(o.label)}</span>${on?CM.icon('check',{size:16,cls:'pk-ck'}):''}</div>`; });
+        });
+        const cv=q&&q.value.trim();
+        if(allowCustom && cv && !options.some(o=>o.label.toLowerCase()===cv.toLowerCase()))
+          html+=`<div class="picker-opt" data-v="${CM.esc(cv)}">${CM.icon('plus',{size:15})}<span class="pk-label">添加 “${CM.esc(cv)}”</span></div>`;
+        list.innerHTML = html || '<p class="muted center" style="padding:24px 0">无匹配项</p>';
+        list.querySelectorAll('.picker-opt').forEach(op=> op.onclick=()=>{
+          const v=op.dataset.v;
+          if(multi){ if(sel.has(v)) sel.delete(v); else sel.add(v); const n=b.querySelector('#pk-n'); if(n) n.textContent=sel.size; commit(); render(); }
+          else { sel=new Set([v]); commit(); close(); }
+        });
+      }
+      if(q) q.addEventListener('input', render);
+      const done=b.querySelector('#pk-done'); if(done) done.onclick=()=>close();
+      render();
+    }});
+  }
+
+  function tagInput({options=[], value=[], placeholder='', single=false, allowCustom=true, label=''}){
+    const el=document.createElement('div'); el.className='taginput picker-trigger'; el.tabIndex=0;
     let vals=[...value];
     const findOpt=v=>options.find(o=>o.value===v)||{value:v,label:v};
     function chip(v){
@@ -64,45 +100,18 @@ CM.app = (function(){
       c.querySelector('.rm').onclick=ev=>{ ev.stopPropagation(); vals=vals.filter(x=>x!==v); paint(); };
       return c;
     }
-    function paint(){ [...el.querySelectorAll('.chip')].forEach(c=>c.remove()); vals.forEach(v=> el.insertBefore(chip(v),input)); }
-    function add(v){ if(!v) return; if(single) vals=[v]; else if(!vals.includes(v)) vals.push(v); input.value=''; paint(); closeSuggest(); if(single) input.blur(); }
-
-    let sug=null, hl=-1;
-    function closeSuggest(){ if(sug){ sug.remove(); sug=null; hl=-1; } }
-    function openSuggest(){
-      const q=input.value.trim().toLowerCase();
-      let list=options.filter(o=>!vals.includes(o.value) && (!q || o.label.toLowerCase().includes(q) || (o.group||'').toLowerCase().includes(q)));
-      closeSuggest();
-      if(!list.length && !(allowCustom&&q)) return;
-      sug=document.createElement('div'); sug.className='suggest';
-      const groups={}; list.forEach(o=>{ const g=o.group||''; (groups[g]=groups[g]||[]).push(o); });
-      let html=''; Object.keys(groups).forEach(g=>{
-        if(g) html+=`<div class="grp">${CM.esc(g)}</div>`;
-        groups[g].slice(0,40).forEach(o=>{ html+=`<div class="opt" data-v="${CM.esc(o.value)}">
-          <span class="em">${optVis(o)}</span>
-          <span>${CM.esc(o.label)}</span>${o.desc?`<span class="desc">${CM.esc(o.desc)}</span>`:''}</div>`; });
-      });
-      if(allowCustom&&q&&!options.some(o=>o.label.toLowerCase()===q)) html+=`<div class="opt" data-v="${CM.esc(input.value.trim())}"><span class="em">＋</span><span>添加 “${CM.esc(input.value.trim())}”</span></div>`;
-      sug.innerHTML=html;
-      const r=el.getBoundingClientRect();
-      sug.style.left=r.left+'px'; sug.style.top=(r.bottom+6)+'px'; sug.style.width=Math.max(240,r.width)+'px';
-      document.body.appendChild(sug);
-      window.addEventListener('scroll', closeSuggest, {once:true, capture:true});
-      sug.querySelectorAll('.opt').forEach(op=> op.onmousedown=e=>{ e.preventDefault(); add(op.dataset.v); });
+    function paint(){
+      el.innerHTML='';
+      vals.forEach(v=> el.appendChild(chip(v)));
+      if(!vals.length){ const ph=document.createElement('span'); ph.className='ti-ph'; ph.textContent=placeholder||'点击选择'; el.appendChild(ph); }
+      const car=document.createElement('span'); car.className='ti-caret'; car.innerHTML=CM.icon('chevronDown',{size:16}); el.appendChild(car);
     }
-    input.addEventListener('input',openSuggest);
-    input.addEventListener('focus',()=>{ el.classList.add('focus'); openSuggest(); });
-    input.addEventListener('blur',()=>{ el.classList.remove('focus'); setTimeout(closeSuggest,150); });
-    input.addEventListener('keydown',e=>{
-      const opts=sug?[...sug.querySelectorAll('.opt')]:[];
-      if(e.key==='ArrowDown'){ e.preventDefault(); hl=Math.min(opts.length-1,hl+1); opts.forEach((o,i)=>o.classList.toggle('hl',i===hl)); }
-      else if(e.key==='ArrowUp'){ e.preventDefault(); hl=Math.max(0,hl-1); opts.forEach((o,i)=>o.classList.toggle('hl',i===hl)); }
-      else if(e.key==='Enter'){ e.preventDefault(); if(hl>=0&&opts[hl]) add(opts[hl].dataset.v); else if(allowCustom&&input.value.trim()) add(input.value.trim()); }
-      else if(e.key==='Backspace'&&!input.value&&vals.length){ vals.pop(); paint(); }
-    });
-    el.onclick=()=>input.focus();
-    el.appendChild(input); paint();
-    return { el, get:()=>vals.slice(), set:v=>{vals=[...v];paint();} };
+    el.onclick=(e)=>{ if(e.target.closest('.rm')) return;
+      openPicker({ title: label?('选择 '+label):'选择', options, multi:!single, selected:vals, allowCustom,
+        onChange:(v)=>{ vals = single ? v.slice(0,1) : v; paint(); } });
+    };
+    paint();
+    return { el, get:()=>vals.slice(), set:v=>{ vals=[...v]; paint(); } };
   }
 
   /* ================= 标签渲染（可点击→知识卡）================= */
@@ -372,14 +381,14 @@ CM.app = (function(){
     `,{wide:true});
 
     const inputs={
-      origin:tagInput({options:OPT.origin,value:r.origin?[r.origin]:[],single:true,placeholder:'选择国家/产区',allowCustom:true}),
-      region:tagInput({options:OPT.region,value:r.regions||[],placeholder:'输入子产区'}),
-      variety:tagInput({options:OPT.variety,value:r.varieties||[],placeholder:'选择豆种'}),
-      process:tagInput({options:OPT.process,value:r.processes||[],placeholder:'选择处理法',colored:true}),
-      roast:tagInput({options:OPT.roast,value:r.roast?[r.roast]:[],single:true,placeholder:'选择烘焙度',allowCustom:false}),
-      altitude:tagInput({options:OPT.altitude,value:r.altitude?[r.altitude]:[],single:true,placeholder:'选择海拔',allowCustom:false}),
-      brew:tagInput({options:OPT.brew,value:r.brew?[r.brew]:[],single:true,placeholder:'选择冲煮',allowCustom:true}),
-      flavor:tagInput({options:OPT.flavor,value:r.flavors||[],placeholder:'输入或选择风味'}),
+      origin:tagInput({options:OPT.origin,value:r.origin?[r.origin]:[],single:true,allowCustom:true,label:'国家/产区',placeholder:'点击选择国家/产区'}),
+      region:tagInput({options:OPT.region,value:r.regions||[],allowCustom:true,label:'子产区',placeholder:'点击选择/添加子产区'}),
+      variety:tagInput({options:OPT.variety,value:r.varieties||[],allowCustom:true,label:'豆种',placeholder:'点击选择豆种'}),
+      process:tagInput({options:OPT.process,value:r.processes||[],allowCustom:true,label:'处理法',placeholder:'点击选择处理法'}),
+      roast:tagInput({options:OPT.roast,value:r.roast?[r.roast]:[],single:true,allowCustom:false,label:'烘焙度',placeholder:'点击选择烘焙度'}),
+      altitude:tagInput({options:OPT.altitude,value:r.altitude?[r.altitude]:[],single:true,allowCustom:false,label:'海拔',placeholder:'点击选择海拔'}),
+      brew:tagInput({options:OPT.brew,value:r.brew?[r.brew]:[],single:true,allowCustom:true,label:'冲煮',placeholder:'点击选择冲煮方法'}),
+      flavor:tagInput({options:OPT.flavor,value:r.flavors||[],allowCustom:true,label:'风味',placeholder:'点击选择/添加风味'}),
     };
     Object.entries(inputs).forEach(([k,v])=> m.body.querySelector('#f-'+k).appendChild(v.el));
 
@@ -613,7 +622,8 @@ CM.app = (function(){
     document.querySelectorAll('.tab').forEach(t=> t.onclick=()=>switchView(t.dataset.v));
     document.getElementById('addBtn').onclick=()=>openForm();
     document.addEventListener('cm:changed',updateCounts);
-    document.addEventListener('cm:cloudError',()=>toast('云端同步失败，请检查网络'));
+    let _ceT=0; document.addEventListener('cm:cloudError',()=>{ const n=Date.now(); if(n-_ceT>8000){ _ceT=n; toast('网络波动，已暂存本地，联网后自动同步'); } });
+    window.addEventListener('online',()=>{ try{ CM.store.flushQueue(); }catch(e){} });
     const ab=document.getElementById('acctBtn'); if(ab) ab.onclick=async()=>{
       if(CM.cloud && CM.cloud.configured() && !CM.cloud.enabled){
         const ok=await CM.cloud.ensureReady();
@@ -629,36 +639,51 @@ CM.app = (function(){
 
   /* ===== 启动：有云端配置→走账号/同步；否则→本地存储 ===== */
   async function bootstrap(){
-    if(CM.cloud && CM.cloud.configured()){
-      renderAccount(null);                       // 先把"登录"入口显示出来（即使 SDK 还没就绪）
-      let ok = CM.cloud.init();
-      if(!ok){ try{ ok = await CM.cloud.ensureReady(); }catch(e){} }   // 重进时本地脚本没加载→懒加载重试
-      if(ok){
-        CM.cloud.onChange((session)=> onAuth(session));
-        let session=null; try{ session=await CM.cloud.getSession(); }catch(e){}
-        await onAuth(session);
-        return;
-      }
-      // 配置了但 SDK 实在加载不出来：仍显示登录入口（点击时再试），暂用本地
-      CM.store.seedIfEmpty(CM.seed); finishBoot();
-    }else{
-      renderAccount(null);                        // 未配置云端 → 隐藏账号按钮
-      CM.store.seedIfEmpty(CM.seed);
-      finishBoot();
+    if(!(CM.cloud && CM.cloud.configured())){       // 未配置云端 → 纯本地访客
+      renderAccount(null); CM.store.seedIfEmpty(CM.seed); finishBoot(); return;
     }
+    renderAccount(null);                            // 先把"登录"入口显示出来
+    let ok = CM.cloud.init();
+    if(!ok){ try{ ok = await CM.cloud.ensureReady(); }catch(e){} }
+    if(ok){
+      CM.cloud.onChange((session)=> onAuth(session));
+      let session=null; try{ session=await CM.cloud.getSession(); }catch(e){}
+      if(session && session.user){ await onAuth(session); return; }
+    }
+    // 无有效会话（或 SDK 没起来）：若曾登录过，回放该用户的本地镜像——绝不退回示例数据，绝不丢数据
+    const last = CM.store.lastUser();
+    if(last){
+      CM.store.setMode('cloud', last); CM.store.loadMirror();
+      renderAccount(null);
+      toast('已显示本地备份，登录后自动云端同步');
+      booted=true; updateCounts(); switchView('map'); return;
+    }
+    await onAuth(null);                             // 从未登录 → 访客本地 + 示例
   }
-  async function onAuth(session){
+  let _authUid='__init__';
+  function onAuth(session){
+    const newUid = (session && session.user) ? session.user.id : null;
+    if(booted && newUid===_authUid) return Promise.resolve();   // 去重：初始化时 INITIAL_SESSION 与显式 getSession 各触发一次
+    _authUid = newUid;
+    return _onAuthImpl(session);
+  }
+  async function _onAuthImpl(session){
     const user = session && session.user;
     if(user){
-      CM.cloud.setUser(user); CM.store.setMode('cloud');
-      try{ CM.store.setCache(await CM.cloud.fetchAll()); }
-      catch(e){ toast('云端读取失败：'+(e.message||e)); CM.store.setCache([]); }
-      await maybeMigrate();
-    }else{
-      CM.cloud.setUser(null); CM.store.setMode('local'); CM.store.loadLocal(); CM.store.seedIfEmpty(CM.seed);
+      CM.cloud.setUser(user);
+      CM.store.setMode('cloud', user.id);
+      CM.store.loadMirror();                        // 先秒显本地镜像（绝不空屏）
+      renderAccount(user); finishBoot();            // 立即出 UI
+      try{ const remote=await CM.cloud.fetchAll(); CM.store.mergeRemote(remote); refresh(); }
+      catch(e){ toast('云端读取失败，已显示本地备份'); }   // 失败不清空
+      try{ await maybeMigrate(); }catch(e){}
+      try{ await CM.store.flushQueue(); }catch(e){}  // 补传离线期间未同步的记录
+      refresh();
+      return;
     }
-    renderAccount(user);
-    finishBoot();
+    CM.cloud.setUser(null);
+    CM.store.setMode('local'); CM.store.loadLocal(); CM.store.seedIfEmpty(CM.seed);
+    renderAccount(null); finishBoot();
   }
   function finishBoot(){ updateCounts(); if(!booted){ booted=true; switchView('map'); } else refresh(); }
 
@@ -672,8 +697,8 @@ CM.app = (function(){
   }
   async function uploadRecords(records){
     let ok=0; for(const r of records){ try{ await CM.cloud.upsert(r); ok++; }catch(e){ console.error('upload',e); } }
-    try{ CM.store.setCache(await CM.cloud.fetchAll()); }catch(e){}
-    return ok;
+    try{ const remote=await CM.cloud.fetchAll(); CM.store.mergeRemote(remote); }catch(e){}
+    refresh(); return ok;
   }
   async function maybeMigrate(){
     const pending=pendingLocal();
@@ -748,7 +773,16 @@ CM.app = (function(){
       <button class="btn ghost" id="ac-out" style="width:100%;justify-content:center">${CM.icon('logout',{size:15})} 退出登录</button>
     `,{onMount:(body,close)=>{
       body.querySelector('#ac-sync').onclick=async()=>{ await syncLocal(); close(); };
-      body.querySelector('#ac-out').onclick=async()=>{ try{ await CM.cloud.signOut(); }catch(e){} close(); toast('已退出登录'); };
+      const out=body.querySelector('#ac-out');
+      out.onclick=async()=>{
+        out.disabled=true; out.textContent='退出中…';
+        try{ await CM.cloud.signOut('local'); }catch(e){}
+        // 不依赖 onAuthStateChange 事件，显式同步重置为登出态（弱网/事件不触发也必生效）
+        _authUid=null;
+        CM.cloud.setUser(null);
+        CM.store.setMode('local'); CM.store.setUserId(null); CM.store.loadLocal(); CM.store.seedIfEmpty(CM.seed);
+        renderAccount(null); close(); switchView('map'); toast('已退出登录');
+      };
     }});
   }
 

@@ -64,7 +64,18 @@ CM.cloud = (function(){
     // 邮箱 + 密码（最稳：不依赖收邮件、不跨浏览器）
     async signUp(email, password){ return client.auth.signUp({ email, password }); },
     async signInPassword(email, password){ return client.auth.signInWithPassword({ email, password }); },
-    async signOut(){ return client.auth.signOut(); },
+    // 默认 local scope：只清本地会话、不发服务端注销请求，弱网下立即返回；并强清残留 token 键
+    async signOut(scope='local'){
+      try{ if(client) await client.auth.signOut({ scope }); }catch(e){ console.warn('signOut',e); }
+      try{
+        [localStorage, sessionStorage].forEach(st=>{
+          const ks=[]; for(let i=0;i<st.length;i++){ const k=st.key(i); if(k && /sb-.*-auth-token/.test(k)) ks.push(k); }
+          ks.forEach(k=>st.removeItem(k));
+        });
+      }catch(e){}
+      user=null;
+      return { ok:true };
+    },
 
     // 取当前用户全部记录（RLS 保证只返回本人数据）
     async fetchAll(){
@@ -73,13 +84,14 @@ CM.cloud = (function(){
       return (data || []).map(r => ({ ...(r.data||{}), id:r.id }));
     },
     async upsert(rec){
-      if(!user) return;
+      if(!user) throw new Error('未登录，已暂存待同步');   // 抛错→留在待传队列，登录后自动补传（不可静默吞掉）
       const { error } = await client.from('records').upsert({
         id: rec.id, user_id: user.id, data: rec, updated_at: new Date().toISOString()
       });
       if(error) throw error;
     },
     async remove(id){
+      if(!user) throw new Error('未登录，已暂存待同步');
       const { error } = await client.from('records').delete().eq('id', id);
       if(error) throw error;
     },

@@ -3,56 +3,80 @@
  * ==========================================================================*/
 window.CM = window.CM || {};
 
+/* 离线优先数据层：本地镜像(按账号隔离) + 云端同步 + 失败入队补传。
+ * 三道防线保证“登录态新增的数据绝不丢”：①每次写操作返回前先把整份 cache 同步落地到
+ * 本地镜像(不依赖网络/会话)；②云端写失败入待传队列、联网/重登时自动补传；③读取失败
+ * 只提示不清空，刷新优先秒显本地镜像。 */
 CM.store = (function(){
-  const KEY = 'coffeemap.records.v1';
-  let cache = null;
-  let mode = 'local';            // 'local' = localStorage | 'cloud' = Supabase
+  const LKEY = 'coffeemap.records.v1';          // 访客/本地（含示例数据）
+  const LAST = 'coffeemap.lastUser';            // 上次登录用户 id（会话丢失时回放镜像）
+  let cache = null, mode = 'local', uid = null;
 
-  function _ensure(){
-    if(cache === null){
-      if(mode === 'local'){ try{ cache = JSON.parse(localStorage.getItem(KEY)) || []; }catch(e){ cache = []; } }
-      else cache = [];
-    }
-    return cache;
-  }
+  const mirrorKey = ()=> (mode==='cloud' && uid) ? ('coffeemap.records.cloud.'+uid) : LKEY;
+  const queueKey  = ()=> 'coffeemap.unsync.'+(uid||'guest');
+  function _read(k){ try{ return JSON.parse(localStorage.getItem(k)) || []; }catch(e){ return []; } }
+  function _write(k,v){ try{ localStorage.setItem(k, JSON.stringify(v)); }catch(e){} }
+
+  function _ensure(){ if(cache===null) cache=_read(mirrorKey()); return cache; }
   function _sortDispatch(){
     cache.sort((a,b)=> (b.tastedAt||'').localeCompare(a.tastedAt||'') || ((b.createdAt||0)-(a.createdAt||0)));
     document.dispatchEvent(new CustomEvent('cm:changed'));
   }
-  function _saveLocal(){ try{ localStorage.setItem(KEY, JSON.stringify(cache)); }catch(e){} }
-  function _cloud(promise){ Promise.resolve(promise).catch(e=>{ console.error('cloud sync',e); document.dispatchEvent(new CustomEvent('cm:cloudError',{detail:e})); }); }
-  function _persistUpsert(rec){ if(mode==='local') _saveLocal(); else _cloud(CM.cloud.upsert(rec)); }
-  function _persistRemove(id){ if(mode==='local') _saveLocal(); else _cloud(CM.cloud.remove(id)); }
+  function _saveMirror(){ _write(mirrorKey(), cache); }
+
+  // ---- 待同步队列 ----
+  const _queue = ()=> _read(queueKey());
+  function _enqueue(op){ const q=_queue().filter(x=>x.id!==op.id); q.push(op); _write(queueKey(), q); }
+  function _dequeue(id){ _write(queueKey(), _queue().filter(x=>x.id!==id)); }
+  let _flushT=null;
+  function _scheduleFlush(){ if(_flushT) return; _flushT=setTimeout(()=>{ _flushT=null; flushQueue(); }, 8000); }
+
+  function _cloudUpsert(rec){
+    Promise.resolve(CM.cloud.upsert(rec)).then(()=>_dequeue(rec.id))
+      .catch(e=>{ document.dispatchEvent(new CustomEvent('cm:cloudError',{detail:e})); _scheduleFlush(); });
+  }
+  function _cloudRemove(id){
+    Promise.resolve(CM.cloud.remove(id)).then(()=>_dequeue(id))
+      .catch(e=>{ document.dispatchEvent(new CustomEvent('cm:cloudError',{detail:e})); _scheduleFlush(); });
+  }
+  function _persistUpsert(rec){ _saveMirror(); if(mode==='cloud'){ _enqueue({op:'upsert',id:rec.id,rec}); _cloudUpsert(rec); } }
+  function _persistRemove(id){ _saveMirror(); if(mode==='cloud'){ _enqueue({op:'remove',id}); _cloudRemove(id); } }
+
+  async function flushQueue(){
+    if(mode!=='cloud' || !(CM.cloud && CM.cloud.user)) return;
+    for(const item of _queue()){
+      try{ if(item.op==='remove') await CM.cloud.remove(item.id); else await CM.cloud.upsert(item.rec); _dequeue(item.id); }
+      catch(e){ /* 保留，下次再试 */ }
+    }
+  }
 
   return {
     get mode(){ return mode; },
-    setMode(m){ mode = m; },
-    loadLocal(){ try{ cache = JSON.parse(localStorage.getItem(KEY)) || []; }catch(e){ cache = []; } },
-    setCache(arr){ cache = (arr||[]).slice(); _sortDispatch(); },   // 云端拉取后填充，不再回写
+    getUserId(){ return uid; },
+    lastUser(){ try{ return localStorage.getItem(LAST); }catch(e){ return null; } },   // 纯字符串，勿 JSON
+    setMode(m, userId){ mode=m; if(m==='cloud'){ if(userId) uid=userId; if(uid){ try{ localStorage.setItem(LAST, uid); }catch(e){} } } else uid=null; cache=null; },
+    setUserId(id){ uid=id; try{ id ? localStorage.setItem(LAST,id) : localStorage.removeItem(LAST); }catch(e){} },
+
+    loadMirror(){ cache=_read(mirrorKey()); _sortDispatch(); },      // 从当前镜像键秒显
+    loadLocal(){ cache=_read(LKEY); },                              // 访客本地
+    setCache(arr){ cache=(arr||[]).slice(); _sortDispatch(); _saveMirror(); },
+    mergeRemote(remote){                                            // 本地镜像 ∪ 远端(远端权威)，保留本地未传项
+      const byId=new Map();
+      _ensure().forEach(r=> byId.set(r.id, r));
+      (remote||[]).forEach(r=> byId.set(r.id, r));
+      cache=[...byId.values()]; _sortDispatch(); _saveMirror();
+    },
+    flushQueue,
+    pendingSync(){ return _queue().length; },
 
     all(){ return _ensure().slice(); },
     get(id){ return _ensure().find(r=>r.id===id); },
-    add(rec){
-      rec.id = rec.id || CM.uid();
-      rec.createdAt = rec.createdAt || Date.now();
-      _ensure().push(rec); _sortDispatch(); _persistUpsert(rec); return rec;
-    },
-    update(id, patch){
-      const r = _ensure().find(x=>x.id===id); if(!r) return;
-      Object.assign(r, patch); _sortDispatch(); _persistUpsert(r); return r;
-    },
-    remove(id){ cache = _ensure().filter(r=>r.id!==id); _sortDispatch(); _persistRemove(id); },
-    replaceAll(arr){
-      cache = arr.slice(); _sortDispatch();
-      if(mode==='local') _saveLocal(); else cache.forEach(r=> _cloud(CM.cloud.upsert(r)));
-    },
-    clear(){
-      const ids = _ensure().map(r=>r.id);
-      cache = []; _sortDispatch();
-      if(mode==='local') localStorage.removeItem(KEY);
-      else ids.forEach(id=> _cloud(CM.cloud.remove(id)));
-    },
-    seedIfEmpty(seed){ if(mode==='local' && _ensure().length===0 && seed && seed.length){ cache = seed.slice(); _sortDispatch(); _saveLocal(); } }
+    add(rec){ rec.id=rec.id||CM.uid(); rec.createdAt=rec.createdAt||Date.now(); _ensure().push(rec); _sortDispatch(); _persistUpsert(rec); return rec; },
+    update(id,patch){ const r=_ensure().find(x=>x.id===id); if(!r) return; Object.assign(r,patch); _sortDispatch(); _persistUpsert(r); return r; },
+    remove(id){ cache=_ensure().filter(r=>r.id!==id); _sortDispatch(); _persistRemove(id); },
+    replaceAll(arr){ cache=arr.slice(); _sortDispatch(); _saveMirror(); if(mode==='cloud') cache.forEach(r=>{ _enqueue({op:'upsert',id:r.id,rec:r}); _cloudUpsert(r); }); },
+    clear(){ const ids=_ensure().map(r=>r.id); cache=[]; _sortDispatch(); _saveMirror(); if(mode==='cloud') ids.forEach(id=>{ _enqueue({op:'remove',id}); _cloudRemove(id); }); },
+    seedIfEmpty(seed){ if(mode==='local' && _ensure().length===0 && seed && seed.length){ cache=seed.slice(); _sortDispatch(); _saveMirror(); } }
   };
 })();
 

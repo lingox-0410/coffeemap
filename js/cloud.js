@@ -12,7 +12,9 @@ CM.cloud = (function(){
     if(!window.supabase || !window.supabase.createClient){ console.warn('supabase-js 未加载'); return false; }
     try{
       client = window.supabase.createClient(c.SUPABASE_URL, c.SUPABASE_ANON_KEY, {
-        auth:{ persistSession:true, autoRefreshToken:true, detectSessionInUrl:true, flowType:'implicit' }
+        auth:{ persistSession:true, autoRefreshToken:true, detectSessionInUrl:true, flowType:'implicit',
+          // 用无锁实现取代默认的 navigator.locks —— 某些 webview(华为/夸克)上它会卡死 auth 调用(登录/登出/取会话)
+          lock:(name, acquireTimeout, fn)=> Promise.resolve(fn()) }
       });
       enabled = true;
     }catch(e){ console.error('supabase init 失败', e); enabled=false; }
@@ -64,16 +66,16 @@ CM.cloud = (function(){
     // 邮箱 + 密码（最稳：不依赖收邮件、不跨浏览器）
     async signUp(email, password){ return client.auth.signUp({ email, password }); },
     async signInPassword(email, password){ return client.auth.signInWithPassword({ email, password }); },
-    // 默认 local scope：只清本地会话、不发服务端注销请求，弱网下立即返回；并强清残留 token 键
+    // 先同步清掉本地会话(最关键、绝不阻塞)，再尽力调用 SDK(带超时，hang 也不影响)
     async signOut(scope='local'){
-      try{ if(client) await client.auth.signOut({ scope }); }catch(e){ console.warn('signOut',e); }
+      user=null;
       try{
         [localStorage, sessionStorage].forEach(st=>{
           const ks=[]; for(let i=0;i<st.length;i++){ const k=st.key(i); if(k && /sb-.*-auth-token/.test(k)) ks.push(k); }
           ks.forEach(k=>st.removeItem(k));
         });
       }catch(e){}
-      user=null;
+      try{ if(client) await Promise.race([ client.auth.signOut({ scope }), new Promise(r=>setTimeout(r,2000)) ]); }catch(e){ console.warn('signOut',e); }
       return { ok:true };
     },
 

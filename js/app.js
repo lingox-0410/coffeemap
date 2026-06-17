@@ -774,14 +774,13 @@ CM.app = (function(){
     `,{onMount:(body,close)=>{
       body.querySelector('#ac-sync').onclick=async()=>{ await syncLocal(); close(); };
       const out=body.querySelector('#ac-out');
-      out.onclick=async()=>{
-        out.disabled=true; out.textContent='退出中…';
-        try{ await CM.cloud.signOut('local'); }catch(e){}
-        // 不依赖 onAuthStateChange 事件，显式同步重置为登出态（弱网/事件不触发也必生效）
+      out.onclick=()=>{
+        // 立即本地登出并重置 UI —— 不 await 任何 SDK/网络调用，绝不会卡在"退出中"
         _authUid=null;
         CM.cloud.setUser(null);
         CM.store.setMode('local'); CM.store.setUserId(null); CM.store.loadLocal(); CM.store.seedIfEmpty(CM.seed);
         renderAccount(null); close(); switchView('map'); toast('已退出登录');
+        try{ CM.cloud.signOut('local'); }catch(e){}   // 后台尽力注销(同步清 token 已在其内完成)，不阻塞
       };
     }});
   }

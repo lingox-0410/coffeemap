@@ -22,7 +22,10 @@ CM.store = (function(){
     cache.sort((a,b)=> (b.tastedAt||'').localeCompare(a.tastedAt||'') || ((b.createdAt||0)-(a.createdAt||0)));
     document.dispatchEvent(new CustomEvent('cm:changed'));
   }
-  function _saveMirror(){ _write(mirrorKey(), cache); }
+  const _stripPhotos = r => (r && r.photos) ? (()=>{ const {photos, ...rest}=r; return rest; })() : r;
+  // 本地镜像【不存 base64 照片】——否则几十张照片就撑爆 localStorage 配额(手机 webview 常只有 2.5~5MB)，导致“只能存十几条”。
+  // 照片保存在：内存(当前会话显示) + 云端 data(跨浏览器) + 待传队列(未同步时)。
+  function _saveMirror(){ _write(mirrorKey(), cache.map(_stripPhotos)); }
 
   // ---- 待同步队列 ----
   const _queue = ()=> _read(queueKey());
@@ -57,7 +60,11 @@ CM.store = (function(){
     setMode(m, userId){ mode=m; if(m==='cloud'){ if(userId) uid=userId; if(uid){ try{ localStorage.setItem(LAST, uid); }catch(e){} } } else uid=null; cache=null; },
     setUserId(id){ uid=id; try{ id ? localStorage.setItem(LAST,id) : localStorage.removeItem(LAST); }catch(e){} },
 
-    loadMirror(){ cache=_read(mirrorKey()); _sortDispatch(); },      // 从当前镜像键秒显
+    loadMirror(){                                                   // 从当前镜像键秒显
+      const arr=_read(mirrorKey()); const byId=new Map(arr.map(r=>[r.id,r]));
+      _queue().forEach(it=>{ if(it.op==='upsert' && it.rec) byId.set(it.rec.id, it.rec); });   // 未同步记录的完整数据(含照片)从队列回放，照片不丢
+      cache=[...byId.values()]; _sortDispatch();
+    },
     loadLocal(){ cache=_read(LKEY); },                              // 访客本地
     setCache(arr){ cache=(arr||[]).slice(); _sortDispatch(); _saveMirror(); },
     mergeRemote(remote){                                            // 本地镜像 ∪ 远端(远端权威)，保留本地未传项

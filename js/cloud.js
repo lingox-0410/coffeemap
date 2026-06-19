@@ -1,129 +1,144 @@
 /* ============================================================================
- * CoffeeMap · 云端层 (cloud.js) — Supabase 客户端 + 邮箱魔法链接登录 + 同步
- * 未配置(config.js 留空) → enabled=false，应用走本地存储，零影响。
+ * CoffeeMap · 云端层 (cloud.js) — 直连 Supabase REST（不依赖官方 SDK 的会话/锁机制）
+ *
+ * 为什么不用 supabase-js 的 auth：它的会话持久化 + Web Locks 在华为/夸克/部分电脑
+ * webview 上会【卡死不返回】（登录卡在“登录中”、拿着失效会话反复重试导致记录传不上去）。
+ * 这里改为浏览器原生 fetch 直连 /auth /rest /storage，自己管令牌（带超时、自动续期、
+ * 凭证兜底重登），彻底甩开会卡死的 SDK 会话层。
+ * 未配置(config.js 留空) → configured()=false，应用走纯本地，零影响。
  * ==========================================================================*/
 window.CM = window.CM || {};
 CM.cloud = (function(){
-  let client=null, enabled=false, user=null;
-  // 内存串行锁替代 navigator.locks：既避免华为/夸克 webview 上 Web Locks 卡死，又避免“无锁”导致的 auth 并发损坏/卡死
-  let _lockChain = Promise.resolve();
-  const memLock = (name, acquireTimeout, fn)=>{ const run=_lockChain.then(()=>fn()); _lockChain=run.then(()=>{},()=>{}); return run; };
-  // 本地保存凭证(混淆)用于刷新后自动重登——某些 webview 上 SDK 会话不跨刷新，自动重登保证保持登录、写入能同步
-  const CRED='coffeemap.cred';
-  const _saveCred=(e,p)=>{ try{ localStorage.setItem(CRED, btoa(unescape(encodeURIComponent(JSON.stringify({e,p}))))); }catch(x){} };
-  const _getCred =()=>{ try{ const s=localStorage.getItem(CRED); return s?JSON.parse(decodeURIComponent(escape(atob(s)))):null; }catch(x){ return null; } };
+  const C   = ()=> window.CM_CONFIG || {};
+  const BASE= ()=> (C().SUPABASE_URL||'').replace(/\/+$/,'');
+  const ANON= ()=> C().SUPABASE_ANON_KEY || '';
+  let user=null, _onChange=null, _reauthing=null;
+
+  const TOK='coffeemap.tok', CRED='coffeemap.cred';
+  const _saveTok = t =>{ try{ localStorage.setItem(TOK, JSON.stringify(t)); }catch(e){} };
+  const _getTok  = ()=>{ try{ return JSON.parse(localStorage.getItem(TOK)||'null'); }catch(e){ return null; } };
+  const _clearTok= ()=>{ try{ localStorage.removeItem(TOK); }catch(e){} };
+  const _saveCred= (e,p)=>{ try{ localStorage.setItem(CRED, btoa(unescape(encodeURIComponent(JSON.stringify({e,p}))))); }catch(x){} };
+  const _getCred = ()=>{ try{ const s=localStorage.getItem(CRED); return s?JSON.parse(decodeURIComponent(escape(atob(s)))):null; }catch(x){ return null; } };
   const _clearCred=()=>{ try{ localStorage.removeItem(CRED); }catch(x){} };
 
-  function init(){
-    const c = window.CM_CONFIG || {};
-    if(!c.SUPABASE_URL || !c.SUPABASE_ANON_KEY) return false;
-    if(!window.supabase || !window.supabase.createClient){ console.warn('supabase-js 未加载'); return false; }
-    try{
-      client = window.supabase.createClient(c.SUPABASE_URL, c.SUPABASE_ANON_KEY, {
-        auth:{ persistSession:true, autoRefreshToken:true, detectSessionInUrl:true, flowType:'implicit',
-          // 用内存串行锁取代默认 navigator.locks（后者在华为/夸克 webview 会卡死 auth 调用）
-          lock: memLock }
-      });
-      enabled = true;
-    }catch(e){ console.error('supabase init 失败', e); enabled=false; }
-    return enabled;
+  function configured(){ return !!(BASE() && ANON()); }
+  function _emit(){ if(_onChange){ try{ _onChange(user?{user}:null); }catch(e){} } }
+
+  // 带超时的 fetch —— 杜绝任何“永不返回”导致的卡死
+  async function _fetch(path, opts, ms){
+    opts=opts||{}; ms=ms||15000;
+    const ctrl = ('AbortController' in window) ? new AbortController() : null;
+    const timer = setTimeout(()=>{ try{ ctrl && ctrl.abort(); }catch(e){} }, ms);
+    try{ return await fetch(BASE()+path, ctrl ? Object.assign({}, opts, {signal:ctrl.signal}) : opts); }
+    finally{ clearTimeout(timer); }
   }
 
-  // 是否已配置云端（与 SDK 是否加载成功无关）
-  function configured(){ const c=window.CM_CONFIG||{}; return !!(c.SUPABASE_URL && c.SUPABASE_ANON_KEY); }
-  // 按需懒加载 supabase SDK（带缓存绕过重试），解决某些浏览器重进时本地脚本未加载的问题
-  function loadSdk(){
-    return new Promise(res=>{
-      if(window.supabase && window.supabase.createClient) return res(true);
-      const s=document.createElement('script');
-      s.src='js/vendor/supabase.min.js?r='+Date.now();
-      s.onload=()=>res(!!(window.supabase && window.supabase.createClient));
-      s.onerror=()=>res(false);
-      (document.head||document.documentElement).appendChild(s);
+  /* ---------------- 鉴权 ---------------- */
+  async function _tokenReq(grant, body){
+    const r = await _fetch('/auth/v1/token?grant_type='+grant, {
+      method:'POST', headers:{ apikey:ANON(), 'Content-Type':'application/json' }, body:JSON.stringify(body)
     });
+    const j = await r.json().catch(()=>({}));
+    if(!r.ok) throw new Error(j.error_description || j.msg || j.error || ('登录失败('+r.status+')'));
+    return j;   // { access_token, refresh_token, expires_in, user }
   }
-  async function ensureReady(){
-    if(enabled) return true;
-    if(!(window.supabase && window.supabase.createClient)) await loadSdk();
-    return init();
+  function _store(j, email){
+    const u = j.user ? { id:j.user.id, email:(j.user.email||email||'') } : null;
+    _saveTok({ access_token:j.access_token, refresh_token:j.refresh_token,
+               expires_at: Date.now() + ((j.expires_in||3600)*1000), user:u });
+    user = u; return u;
   }
+  async function signInPassword(email, password){
+    try{ const j=await _tokenReq('password', {email, password}); const u=_store(j,email); _saveCred(email,password); _emit(); return { data:{ user:u, session:j } }; }
+    catch(e){ return { error:{ message:e.message } }; }
+  }
+  async function signUp(email, password){
+    try{
+      const r=await _fetch('/auth/v1/signup', { method:'POST', headers:{ apikey:ANON(), 'Content-Type':'application/json' }, body:JSON.stringify({email,password}) });
+      const j=await r.json().catch(()=>({}));
+      if(!r.ok) throw new Error(j.error_description || j.msg || j.error || ('注册失败('+r.status+')'));
+      if(j.access_token){ const u=_store(j,email); _saveCred(email,password); _emit(); return { data:{ user:u, session:j } }; }
+      return { data:{ user:(j.user||null), session:null } };   // 开了“邮箱确认”→无 session
+    }catch(e){ return { error:{ message:e.message } }; }
+  }
+  // 用 refresh_token 续期（不需要密码）；失败再用本地存的账号密码重登。并发去重。
+  function _reauth(){
+    if(_reauthing) return _reauthing;
+    _reauthing = (async ()=>{
+      const t=_getTok();
+      if(t && t.refresh_token){ try{ const j=await _tokenReq('refresh_token', { refresh_token:t.refresh_token }); _store(j, t.user&&t.user.email); _emit(); return user; }catch(e){} }
+      const c=_getCred(); if(c && c.e && c.p){ try{ const j=await _tokenReq('password', {email:c.e, password:c.p}); _store(j,c.e); _emit(); return user; }catch(e){} }
+      return null;
+    })().finally(()=>{ _reauthing=null; });
+    return _reauthing;
+  }
+  async function autoLogin(){ const u=await _reauth(); return u ? { user:u } : null; }
+  // 返回可用的 access_token（临近过期先续期）
+  async function _accessToken(){
+    let t=_getTok(); if(!t) return null;
+    if(!t.expires_at || (t.expires_at - Date.now()) < 60000){ await _reauth(); t=_getTok(); }
+    return t ? t.access_token : null;
+  }
+  async function getSession(){ const t=_getTok(); if(t && t.user){ user=t.user; return { user:t.user }; } return null; }
+
+  /* ---------------- 数据（PostgREST，RLS 按 Bearer 令牌） ---------------- */
+  function _hdr(token){ return { apikey:ANON(), Authorization:'Bearer '+(token||ANON()), 'Content-Type':'application/json' }; }
+  async function _db(path, opts, retried){
+    const token = await _accessToken();
+    const r = await _fetch('/rest/v1'+path, Object.assign({}, opts, { headers: Object.assign(_hdr(token), opts.headers||{}) }));
+    if(r.status===401 && !retried){ const u=await _reauth(); if(u) return _db(path, opts, true); }   // 令牌失效→重登再试一次
+    return r;
+  }
+  async function fetchAll(){
+    const r=await _db('/records?select=id,data&order=updated_at.desc', { method:'GET' });
+    if(!r.ok){ const j=await r.json().catch(()=>({})); throw new Error(j.message || j.error || ('读取失败('+r.status+')')); }
+    const rows=await r.json().catch(()=>[]);
+    return (rows||[]).map(x => ({ ...(x.data||{}), id:x.id }));
+  }
+  async function upsert(rec){
+    if(!user) throw new Error('未登录，已暂存待同步');
+    const r=await _db('/records', { method:'POST', headers:{ Prefer:'resolution=merge-duplicates,return=minimal' },
+      body:JSON.stringify({ id:rec.id, user_id:user.id, data:rec, updated_at:new Date().toISOString() }) });
+    if(!r.ok){ const j=await r.json().catch(()=>({})); throw new Error(j.message || j.error || ('上传失败('+r.status+')')); }
+  }
+  async function remove(id){
+    if(!user) throw new Error('未登录，已暂存待同步');
+    const r=await _db('/records?id=eq.'+encodeURIComponent(id), { method:'DELETE', headers:{ Prefer:'return=minimal' } });
+    if(!r.ok && r.status!==404){ const j=await r.json().catch(()=>({})); throw new Error(j.message || ('删除失败('+r.status+')')); }
+  }
+
+  /* ---------------- 照片（Storage 桶 photos） ---------------- */
+  async function uploadPhoto(dataUrl){
+    if(!user) throw new Error('未登录');
+    const blob = await (await fetch(dataUrl)).blob();
+    const ext  = ((blob.type.split('/')[1]) || 'jpg').replace('jpeg','jpg');
+    const path = user.id + '/' + Date.now().toString(36) + Math.random().toString(36).slice(2,8) + '.' + ext;
+    const token= await _accessToken();
+    const r = await _fetch('/storage/v1/object/photos/'+path, {
+      method:'POST', headers:{ apikey:ANON(), Authorization:'Bearer '+(token||ANON()), 'Content-Type':(blob.type||'image/jpeg'), 'x-upsert':'false' }, body:blob
+    }, 30000);
+    if(!r.ok){ const j=await r.json().catch(()=>({})); throw new Error(j.message || j.error || ('上传失败('+r.status+')')); }
+    return BASE() + '/storage/v1/object/public/photos/' + path;
+  }
+
+  async function signOut(){ user=null; _clearTok(); _clearCred(); _emit(); return { ok:true }; }
+
+  // 启动即从本地令牌恢复登录态（同步，立即知道是否登录，不卡）
+  (function(){ const t=_getTok(); if(t && t.user) user=t.user; })();
 
   return {
-    init, configured, ensureReady,
-    get enabled(){ return enabled; },
+    configured, init:()=>configured(), ensureReady: async ()=> configured(),
+    get enabled(){ return configured(); },
     get user(){ return user; },
     setUser(u){ user = u; },
-
-    async getSession(){
-      if(!client) return null;
-      const { data } = await client.auth.getSession();
-      return data ? data.session : null;
-    },
-    // 刷新后 SDK 会话丢失时，用本地保存的凭证自动重登（signInWithPassword 稳定、不像 setSession 会卡）
-    hasCred(){ return !!_getCred(); },
-    async autoLogin(){
-      const c=_getCred(); if(!c||!c.e||!c.p) return null;
-      try{ const r=await client.auth.signInWithPassword({ email:c.e, password:c.p }); if(r.error) throw r.error; return r.data ? r.data.session : null; }
-      catch(e){ console.warn('autoLogin', e); return null; }
-    },
-    onChange(cb){ if(client) client.auth.onAuthStateChange((_evt, session)=> cb(session)); },
-
-    async signIn(email){
-      return client.auth.signInWithOtp({
-        email,
-        options:{ emailRedirectTo: location.href.split('#')[0].split('?')[0], shouldCreateUser:true }
-      });
-    },
-    // 6 位验证码登录（需自定义 SMTP 才能在邮件里显示验证码）
-    async verifyCode(email, token){
-      return client.auth.verifyOtp({ email, token, type:'email' });
-    },
-    // 邮箱 + 密码（最稳：不依赖收邮件、不跨浏览器）；成功即保存凭证供刷新后自动重登
-    async signUp(email, password){ const r=await client.auth.signUp({ email, password }); if(!r.error && r.data && r.data.session) _saveCred(email,password); return r; },
-    async signInPassword(email, password){ const r=await client.auth.signInWithPassword({ email, password }); if(!r.error) _saveCred(email,password); return r; },
-    // 先同步清掉本地会话与凭证(最关键、绝不阻塞)，再尽力调用 SDK(带超时，hang 也不影响)
-    async signOut(scope='local'){
-      user=null;
-      try{
-        _clearCred(); localStorage.removeItem('coffeemap.sess');
-        [localStorage, sessionStorage].forEach(st=>{
-          const ks=[]; for(let i=0;i<st.length;i++){ const k=st.key(i); if(k && /sb-.*-auth-token/.test(k)) ks.push(k); }
-          ks.forEach(k=>st.removeItem(k));
-        });
-      }catch(e){}
-      try{ if(client) await Promise.race([ client.auth.signOut({ scope }), new Promise(r=>setTimeout(r,2000)) ]); }catch(e){ console.warn('signOut',e); }
-      return { ok:true };
-    },
-
-    // 取当前用户全部记录（RLS 保证只返回本人数据）
-    async fetchAll(){
-      const { data, error } = await client.from('records').select('id,data').order('updated_at',{ascending:false});
-      if(error) throw error;
-      return (data || []).map(r => ({ ...(r.data||{}), id:r.id }));
-    },
-    async upsert(rec){
-      if(!user) throw new Error('未登录，已暂存待同步');   // 抛错→留在待传队列，登录后自动补传（不可静默吞掉）
-      const { error } = await client.from('records').upsert({
-        id: rec.id, user_id: user.id, data: rec, updated_at: new Date().toISOString()
-      });
-      if(error) throw error;
-    },
-    async remove(id){
-      if(!user) throw new Error('未登录，已暂存待同步');
-      const { error } = await client.from('records').delete().eq('id', id);
-      if(error) throw error;
-    },
-    // 把 base64 照片上传到 Storage 存储桶，返回公开 URL（记录里只存 URL，不再塞 base64）
-    async uploadPhoto(dataUrl){
-      if(!user) throw new Error('未登录');
-      const blob = await (await fetch(dataUrl)).blob();
-      const ext = ((blob.type.split('/')[1]) || 'jpg').replace('jpeg','jpg');
-      const path = user.id + '/' + Date.now().toString(36) + Math.random().toString(36).slice(2,8) + '.' + ext;
-      const up = client.storage.from('photos').upload(path, blob, { contentType: blob.type||'image/jpeg', upsert:false });
-      // 30s 超时兜底：慢网/掉线时不无限等待，抛错→调用方保留 base64、下次可重试，绝不卡死
-      const { error } = await Promise.race([ up, new Promise((_,rej)=>setTimeout(()=>rej(new Error('上传超时')), 30000)) ]);
-      if(error) throw error;
-      return client.storage.from('photos').getPublicUrl(path).data.publicUrl;
-    },
+    onChange(cb){ _onChange = cb; },
+    hasCred(){ const t=_getTok(); return !!(_getCred() || (t && t.refresh_token)); },
+    getSession, autoLogin,
+    signInPassword, signUp, signOut,
+    fetchAll, upsert, remove, uploadPhoto,
+    // 兼容旧接口（已停用 OTP）
+    signIn: async ()=> ({ error:{ message:'请使用邮箱+密码登录' } }),
+    verifyCode: async ()=> ({ error:{ message:'请使用邮箱+密码登录' } }),
   };
 })();

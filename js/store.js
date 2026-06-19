@@ -39,12 +39,13 @@ CM.store = (function(){
   let _flushT=null;
   function _scheduleFlush(){ if(_flushT) return; _flushT=setTimeout(()=>{ _flushT=null; flushQueue(); }, 8000); }
 
+  const _synced = ()=> document.dispatchEvent(new CustomEvent('cm:synced'));
   function _cloudUpsert(rec){
-    Promise.resolve(CM.cloud.upsert(rec)).then(()=>_dequeue(rec.id))
+    Promise.resolve(CM.cloud.upsert(rec)).then(()=>{ _dequeue(rec.id); _synced(); })
       .catch(e=>{ document.dispatchEvent(new CustomEvent('cm:cloudError',{detail:e})); _scheduleFlush(); });
   }
   function _cloudRemove(id){
-    Promise.resolve(CM.cloud.remove(id)).then(()=>_dequeue(id))
+    Promise.resolve(CM.cloud.remove(id)).then(()=>{ _dequeue(id); _synced(); })
       .catch(e=>{ document.dispatchEvent(new CustomEvent('cm:cloudError',{detail:e})); _scheduleFlush(); });
   }
   function _persistUpsert(rec){ _saveMirror(); if(mode==='cloud'){ _enqueue({op:'upsert',id:rec.id,rec}); _cloudUpsert(rec); } }
@@ -52,10 +53,13 @@ CM.store = (function(){
 
   async function flushQueue(){
     if(mode!=='cloud' || !(CM.cloud && CM.cloud.user)) return;
-    for(const item of _queue()){
+    const q=_queue(); if(!q.length) return;
+    document.dispatchEvent(new CustomEvent('cm:syncstart'));
+    for(const item of q){
       try{ if(item.op==='remove') await CM.cloud.remove(item.id); else await CM.cloud.upsert(item.rec); _dequeue(item.id); }
       catch(e){ /* 保留，下次再试 */ }
     }
+    _synced();
   }
 
   return {
@@ -72,10 +76,20 @@ CM.store = (function(){
     },
     loadLocal(){ cache=_read(LKEY); },                              // 访客本地
     setCache(arr){ cache=(arr||[]).slice(); _sortDispatch(); _saveMirror(); },
-    mergeRemote(remote){                                            // 本地镜像 ∪ 远端(远端权威)，保留本地未传项
-      const byId=new Map();
-      _ensure().forEach(r=> byId.set(r.id, r));
-      (remote||[]).forEach(r=> byId.set(r.id, r));
+    mergeRemote(remote){
+      // 跨端收敛：以【远端为权威全集】，只额外保留本地【尚未同步】的改动（待传队列里的）。
+      // → 别处的删除/编辑会传播过来（本地已同步但远端已没有的记录会被移除）；本地没传上去的新增/编辑不丢。
+      const list = remote || [];
+      const q = _queue();
+      const pendingUpserts = new Map(q.filter(it=>it.op==='upsert' && it.rec).map(it=>[it.id, it.rec]));
+      const pendingRemoves = new Set(q.filter(it=>it.op==='remove').map(it=>it.id));
+      // 安全阀：远端返回空、但本地有数据且没有任何"待删"——疑似异常空响应，保守保留本地（下次正确拉取自愈），绝不"全部消失"
+      if(list.length===0 && _ensure().length>0 && pendingRemoves.size===0){
+        _sortDispatch(); _saveMirror(); return;
+      }
+      const byId = new Map();
+      list.forEach(r=>{ if(!pendingRemoves.has(r.id)) byId.set(r.id, r); });            // 远端全集（本地待删的先不显示）
+      pendingUpserts.forEach((rec,id)=>{ if(!pendingRemoves.has(id)) byId.set(id, rec); }); // 本地未同步的新增/编辑覆盖/补充
       cache=[...byId.values()]; _sortDispatch(); _saveMirror();
     },
     flushQueue,

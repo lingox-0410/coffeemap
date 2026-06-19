@@ -119,7 +119,9 @@ CM.cloud = (function(){
       const blob = await (await fetch(dataUrl)).blob();
       const ext = ((blob.type.split('/')[1]) || 'jpg').replace('jpeg','jpg');
       const path = user.id + '/' + Date.now().toString(36) + Math.random().toString(36).slice(2,8) + '.' + ext;
-      const { error } = await client.storage.from('photos').upload(path, blob, { contentType: blob.type||'image/jpeg', upsert:false });
+      const up = client.storage.from('photos').upload(path, blob, { contentType: blob.type||'image/jpeg', upsert:false });
+      // 30s 超时兜底：慢网/掉线时不无限等待，抛错→调用方保留 base64、下次可重试，绝不卡死
+      const { error } = await Promise.race([ up, new Promise((_,rej)=>setTimeout(()=>rej(new Error('上传超时')), 30000)) ]);
       if(error) throw error;
       return client.storage.from('photos').getPublicUrl(path).data.publicUrl;
     },

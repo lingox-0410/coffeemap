@@ -419,7 +419,7 @@ CM.app = (function(){
     drop.addEventListener('drop',async e=>{ for(const f of e.dataTransfer.files){ if(f.type.startsWith('image/')) photos.push(await CM.resizeImage(f)); } paintThumbs(); });
 
     const saveBtn=m.body.querySelector('#f-save');
-    saveBtn.onclick=async()=>{
+    saveBtn.onclick=()=>{
       const rec={
         id:editId||undefined, createdAt:editId?r.createdAt:Date.now(),
         name:m.body.querySelector('#f-name').value.trim(),
@@ -432,13 +432,13 @@ CM.app = (function(){
         tastedAt:m.body.querySelector('#f-date').value,
         brew:inputs.brew.get()[0]||'',
         price:parseFloat(m.body.querySelector('#f-price').value)||undefined,
-        score, notes:m.body.querySelector('#f-notes').value.trim(), photos,
+        score, notes:m.body.querySelector('#f-notes').value.trim(), photos:[...photos],
       };
       if(!rec.origin){ toast('请选择国家/产区'); return; }
-      saveBtn.disabled=true; saveBtn.textContent='保存中…';
-      try{ rec.photos = await uploadPhotos(photos); }catch(e){ console.warn('photos',e); }  // 登录态把照片传存储桶→只存URL；失败退回原样不丢
+      // 立即保存：本地秒存 + 云端后台补传，照片先以本地图显示——绝不卡“保存中”；随后后台把照片传存储桶、换成 URL
       if(editId) CM.store.update(editId,rec); else CM.store.add(rec);
       m.close(); refresh(); toast(editId?'已更新':'已记录 · 干得漂亮');
+      backgroundUploadPhotos(rec.id, rec.photos);
     };
   }
 
@@ -717,6 +717,16 @@ CM.app = (function(){
     }
     return out;
   }
+  // 保存后【后台】把照片传存储桶并把记录里的 base64 换成 URL —— 不阻塞保存，慢网/掉线也绝不卡“保存中”
+  async function backgroundUploadPhotos(id, photos){
+    try{
+      if(!(CM.cloud && CM.cloud.user)) return;                              // 未登录：保持本地 base64
+      if(!(photos||[]).some(p=>typeof p==='string' && p.startsWith('data:'))) return;
+      const urls = await uploadPhotos(photos);                             // base64→URL（失败的那张保留 base64）
+      if(!CM.store.get(id)) return;                                        // 记录已被删则不动
+      if(urls.some((u,i)=> u!==photos[i])){ CM.store.update(id, { photos:urls }); refresh(); }   // 有变化才回写
+    }catch(e){ console.warn('bg upload',e); }                              // 失败保留 base64，不丢；可用“迁移历史照片”补
+  }
   async function uploadRecords(records){
     let ok=0; for(const r of records){ try{ await CM.cloud.upsert(r); ok++; }catch(e){ console.error('upload',e); } }
     try{ const remote=await CM.cloud.fetchAll(); CM.store.mergeRemote(remote); }catch(e){}
@@ -855,6 +865,6 @@ CM.app = (function(){
 
   return { init, switchView, openForm, openRecord, editRecord:id=>openForm({},id), deleteRecord:id=>{ if(confirm('删除这条记录？')){CM.store.remove(id); while(modalStack.length){const s=modalStack.pop();s.classList.remove('show');setTimeout(()=>s.remove(),250);} refresh(); toast('已删除');} },
     openKnowledge, filterBy, clearFilter, shareRecord, openWrapped, openBlind, exportData, importData, clearAll, refresh,
-    migrateLegacyPhotos, legacyPhotoCount:_legacyPhotoCount };
+    migrateLegacyPhotos, legacyPhotoCount:_legacyPhotoCount, backgroundUploadPhotos };
 })();
 document.addEventListener('DOMContentLoaded',CM.app.init);

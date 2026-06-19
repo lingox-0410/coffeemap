@@ -688,6 +688,8 @@ CM.app = (function(){
       catch(e){ toast('云端读取失败，已显示本地备份'); }   // 失败不清空
       try{ await maybeMigrate(); }catch(e){}
       try{ await CM.store.flushQueue(); }catch(e){}  // 补传离线期间未同步的记录
+      // 登录后自动把历史 base64 照片迁入 Storage（幂等、零丢失；迁完后续登录无 base64 即跳过）
+      try{ if(_legacyPhotoCount()){ const mr=await migrateLegacyPhotos(); if(mr && mr.migratedPhotos) toast(`已把 ${mr.migratedPhotos} 张历史照片迁入云端存储`); } }catch(e){}
       refresh();
       return;
     }
@@ -719,6 +721,43 @@ CM.app = (function(){
     let ok=0; for(const r of records){ try{ await CM.cloud.upsert(r); ok++; }catch(e){ console.error('upload',e); } }
     try{ const remote=await CM.cloud.fetchAll(); CM.store.mergeRemote(remote); }catch(e){}
     refresh(); return ok;
+  }
+
+  /* ===== 历史照片迁移：把老记录 data 里的 base64 照片搬进 Storage 存储桶 =====
+   * 绝对零丢失原则：①只从云端 fetchAll() 取【权威数据】(本地镜像已剥离 base64，绝不拿它当源)；
+   * ②先上传成功拿到 URL，再整条 upsert 回写、只换 photos 字段其余原样；③上传或回写任一步失败，
+   * 都把这张照片保留为原 base64，云端记录维持原样，下次再迁；④幂等：只处理 data: 开头的照片，
+   * 已是 URL 的跳过，重复运行安全。 */
+  const _isB64 = p => typeof p==='string' && p.startsWith('data:');
+  function _legacyPhotoCount(){
+    let n=0; CM.store.all().forEach(r=>{ if(Array.isArray(r.photos)) n+=r.photos.filter(_isB64).length; }); return n;
+  }
+  async function migrateLegacyPhotos(opts){
+    opts = opts || {};
+    if(!(CM.cloud && CM.cloud.user)) return { skipped:true };
+    let cloudRecs;
+    try{ cloudRecs = await CM.cloud.fetchAll(); }       // 权威数据(含 base64)
+    catch(e){ return { error:'fetch' }; }
+    const targets = cloudRecs.filter(r => Array.isArray(r.photos) && r.photos.some(_isB64));
+    const totalPhotos = targets.reduce((n,r)=> n + r.photos.filter(_isB64).length, 0);
+    if(!targets.length) return { migratedRecs:0, migratedPhotos:0, failedPhotos:0, failedRecs:0, totalPhotos:0 };
+    let migratedRecs=0, migratedPhotos=0, failedPhotos=0, failedRecs=0, done=0;
+    for(const r of targets){
+      const newPhotos=[]; let changed=false;
+      for(const p of r.photos){
+        if(_isB64(p)){
+          try{ const url=await CM.cloud.uploadPhoto(p); newPhotos.push(url); changed=true; migratedPhotos++; }
+          catch(e){ newPhotos.push(p); failedPhotos++; console.warn('migrate upload',e); }   // 失败保留 base64，零丢失
+          if(opts.onProgress) opts.onProgress(++done, totalPhotos);
+        } else newPhotos.push(p);
+      }
+      if(changed){
+        try{ await CM.cloud.upsert({ ...r, photos:newPhotos }); migratedRecs++; }   // 整条写回，只换 photos
+        catch(e){ failedRecs++; console.warn('migrate upsert',e); }                 // 写回失败→云端仍是原 base64，零丢失
+      }
+    }
+    try{ const fresh=await CM.cloud.fetchAll(); CM.store.mergeRemote(fresh); refresh(); }catch(e){}
+    return { migratedRecs, migratedPhotos, failedPhotos, failedRecs, totalPhotos, targets:targets.length };
   }
   async function maybeMigrate(){
     const pending=pendingLocal();                 // 本地(访客期)未同步的记录，登录后自动上云，不用弹窗打断
@@ -780,6 +819,7 @@ CM.app = (function(){
   }
   function openAccount(user){
     const pend=pendingLocal().length;
+    const legacy=_legacyPhotoCount();
     openModal('我的账号', `
       <div class="flex gap12" style="align-items:center;margin-bottom:20px">
         <div style="width:48px;height:48px;border-radius:50%;background:var(--bg-2);display:flex;align-items:center;justify-content:center;color:var(--accent)">${CM.icon('user',{size:24})}</div>
@@ -788,9 +828,19 @@ CM.app = (function(){
       </div>
       ${pend ? `<button class="btn primary" id="ac-sync" style="width:100%;justify-content:center;margin-bottom:10px">${CM.icon('cloud',{size:15})} 上传本地 ${pend} 条未同步记录</button>`
              : `<button class="btn ghost" id="ac-sync" style="width:100%;justify-content:center;margin-bottom:10px">${CM.icon('cloud',{size:15})} 同步本地记录到云端</button>`}
+      ${legacy ? `<button class="btn ghost" id="ac-mig" style="width:100%;justify-content:center;margin-bottom:10px">${CM.icon('image',{size:15})} 把 ${legacy} 张历史照片迁入云端存储</button>` : ''}
       <button class="btn ghost" id="ac-out" style="width:100%;justify-content:center">${CM.icon('logout',{size:15})} 退出登录</button>
     `,{onMount:(body,close)=>{
       body.querySelector('#ac-sync').onclick=async()=>{ await syncLocal(); close(); };
+      const mig=body.querySelector('#ac-mig');
+      if(mig) mig.onclick=async()=>{
+        mig.disabled=true;
+        const r=await migrateLegacyPhotos({ onProgress:(d,t)=>{ mig.textContent=`迁移中… ${d}/${t}`; } });
+        if(r && r.error){ mig.disabled=false; mig.innerHTML=`${CM.icon('image',{size:15})} 重试：把历史照片迁入云端`; toast('云端读取失败，请检查网络后重试'); return; }
+        const okP=r.migratedPhotos||0, failP=(r.failedPhotos||0)+(r.failedRecs||0);
+        close();
+        toast(failP ? `已迁移 ${okP} 张，${failP} 张未成功已保留原图，可再点一次` : `已把 ${okP} 张历史照片全部迁入云端存储`);
+      };
       const out=body.querySelector('#ac-out');
       out.onclick=()=>{
         // 立即本地登出并重置 UI —— 不 await 任何 SDK/网络调用，绝不会卡在"退出中"
@@ -804,6 +854,7 @@ CM.app = (function(){
   }
 
   return { init, switchView, openForm, openRecord, editRecord:id=>openForm({},id), deleteRecord:id=>{ if(confirm('删除这条记录？')){CM.store.remove(id); while(modalStack.length){const s=modalStack.pop();s.classList.remove('show');setTimeout(()=>s.remove(),250);} refresh(); toast('已删除');} },
-    openKnowledge, filterBy, clearFilter, shareRecord, openWrapped, openBlind, exportData, importData, clearAll, refresh };
+    openKnowledge, filterBy, clearFilter, shareRecord, openWrapped, openBlind, exportData, importData, clearAll, refresh,
+    migrateLegacyPhotos, legacyPhotoCount:_legacyPhotoCount };
 })();
 document.addEventListener('DOMContentLoaded',CM.app.init);

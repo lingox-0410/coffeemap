@@ -607,7 +607,7 @@ CM.app = (function(){
   function clearAll(){ if(confirm('确定清空所有记录？此操作不可撤销。')){ CM.store.clear(); state.selectedOrigin=null; refresh(); toast('已清空'); } }
 
   /* ================= 初始化 ================= */
-  let booted=false, _lastSync=0, _syncCSSInjected=false;
+  let booted=false, _lastSync=0, _syncCSSInjected=false, _syncFailed=false, _lastCloudErr='', _syncing=false, _lastAutoRetry=0;
   function init(){
     // 移动端底部导航（与顶部共用 .tab/data-v，switchView 自动同步高亮）
     const BN=[['map','地图','map'],['cards','卡片','grid'],['table','明细','list'],['stats','统计','chart'],['album','相册','image'],['passport','护照','book']];
@@ -625,19 +625,19 @@ CM.app = (function(){
     document.querySelectorAll('.tab').forEach(t=> t.onclick=()=>switchView(t.dataset.v));
     document.getElementById('addBtn').onclick=()=>openForm();
     document.addEventListener('cm:changed',()=>{ updateCounts(); renderSync(); });
-    let _ceT=0; document.addEventListener('cm:cloudError',()=>{ renderSync(); const n=Date.now(); if(n-_ceT>8000){ _ceT=n; toast('网络波动，已暂存本地，联网后自动同步'); } });
-    document.addEventListener('cm:synced',()=>{ _lastSync=Date.now(); renderSync(); });
-    document.addEventListener('cm:syncstart',()=>renderSync());
+    let _ceT=0; document.addEventListener('cm:cloudError',(e)=>{ _syncFailed=true; const d=e&&e.detail; if(d) _lastCloudErr=(d.message||String(d)); renderSync();
+      const n=Date.now(); if(n-_ceT>8000){ _ceT=n; toast('有记录没传上云，已暂存本地，正在自动重试'); } });
+    document.addEventListener('cm:synced',()=>{ _lastSync=Date.now(); if(CM.store.pendingSync()===0){ _syncFailed=false; _lastCloudErr=''; } renderSync(); });
+    document.addEventListener('cm:syncstart',()=>{ _syncFailed=false; renderSync(); });
     window.addEventListener('offline',()=>renderSync());
-    setInterval(()=>{ if(CM.cloud&&CM.cloud.configured()) renderSync(); }, 5000);   // 刷新"已同步·X前"/离线/待传态
-    window.addEventListener('online', async ()=>{
-      if(CM.cloud && CM.cloud.configured() && !CM.cloud.user){
-        let s=null; try{ s=await CM.cloud.autoLogin(); }catch(e){}
-        if(s && s.user){ await onAuth(s); renderSync(); return; }     // 联网后自动重登→onAuth 会 flushQueue 补传
-      }
-      try{ CM.store.flushQueue(); }catch(e){}
+    setInterval(()=>{                                       // 每 5s 刷新药丸文案；卡住时自动重登重传自愈
+      if(!(CM.cloud&&CM.cloud.configured())) return;
       renderSync();
-    });
+      if(CM.cloud.user && navigator.onLine && CM.store.pendingSync()>0 && _syncFailed && Date.now()-_lastAutoRetry>30000){
+        _lastAutoRetry=Date.now(); forceSync(true);          // 静默：重登拿新 token→冲队列
+      }
+    }, 5000);
+    window.addEventListener('online', ()=>{ if(CM.cloud&&CM.cloud.configured()) forceSync(true); });   // 联网→重登拿新token→冲队列+重拉
     const ab=document.getElementById('acctBtn'); if(ab) ab.onclick=async()=>{
       if(CM.cloud && CM.cloud.configured() && !CM.cloud.enabled){
         const ok=await CM.cloud.ensureReady();
@@ -651,7 +651,7 @@ CM.app = (function(){
     // 同步状态药丸：放在账号按钮左侧，点一下登录/查看同步
     if(ab){ const pill=document.createElement('button'); pill.id='syncPill'; pill.type='button'; pill.className='sync-pill'; pill.style.display='none';
       _injectSyncCSS(); ab.insertAdjacentElement('beforebegin', pill);
-      pill.onclick=()=>{ const u=CM.cloud&&CM.cloud.user; if(u) openAccount(u); else if(CM.cloud&&CM.cloud.configured()) openSignIn(); }; }
+      pill.onclick=()=>{ if(CM.cloud&&CM.cloud.user) forceSync(); else if(CM.cloud&&CM.cloud.configured()) openSignIn(); }; }   // 点药丸=立即重试同步
     bootstrap();
   }
 
@@ -831,11 +831,31 @@ CM.app = (function(){
     if(busyText){ cls+=' sync-busy'; txt=busyText; }
     else if(!user){ cls+=' sync-warn'; txt = pend ? ('未登录·'+pend+' 待同步') : '未登录'; }
     else if(!online){ cls+=' sync-warn'; txt = pend ? ('离线·'+pend+' 待同步') : '离线'; }
+    else if(pend>0 && _syncFailed){ cls+=' sync-warn'; txt='同步未完成·点我重试'; }   // 卡住时不再假装"同步中"
     else if(pend>0){ cls+=' sync-busy'; txt='同步中·'+pend; }
     else { cls+=' sync-ok'; txt = _lastSync ? ('已同步·'+_fmtSince(_lastSync)) : '已同步'; }
     pill.className=cls;
-    pill.title = user ? (user.email||'已登录') : '点此登录以云端同步';
+    pill.title = (user?(user.email||'已登录'):'点此登录以云端同步') + ((_lastCloudErr&&pend)?('  ·  上次同步报错：'+_lastCloudErr):'');
     pill.innerHTML = `<span class="sync-dot"></span><span class="sync-txt">${CM.esc(txt)}</span>`;
+  }
+  // 可靠同步：先用存的凭证【强制重登拿到新 token】(解决"显示已登录但 token 失效→写入被拒"卡死)，再冲队列、再以云端为准重拉
+  async function forceSync(silent){
+    if(!(CM.cloud && CM.cloud.configured()) || _syncing) return;
+    _syncing=true; renderSync('同步中…');
+    try{
+      if(CM.cloud.hasCred && CM.cloud.hasCred()){
+        try{ const s=await CM.cloud.autoLogin(); if(s&&s.user) CM.cloud.setUser(s.user); }catch(e){}
+      }
+      if(!CM.cloud.user){ _syncing=false; renderSync(); if(!silent){ toast('请先登录后再同步'); openSignIn(); } return; }
+      await CM.store.flushQueue();
+      try{ const remote=await CM.cloud.fetchAll(); CM.store.mergeRemote(remote); _lastSync=Date.now(); }
+      catch(e){ _lastCloudErr=(e&&e.message)||String(e); }
+      _syncing=false; refresh();
+      const left=CM.store.pendingSync();
+      if(left===0){ _syncFailed=false; _lastCloudErr=''; }
+      renderSync();
+      if(!silent) toast(left===0 ? '已与云端同步一致' : ('还有 '+left+' 条没传上：'+(_lastCloudErr||'网络问题，请重试')));
+    }catch(e){ _syncing=false; renderSync(); if(!silent) toast('同步失败：'+((e&&e.message)||e)); }
   }
 
   /* ===== 账号 UI ===== */
@@ -902,18 +922,10 @@ CM.app = (function(){
       ${legacy ? `<button class="btn ghost" id="ac-mig" style="width:100%;justify-content:center;margin-bottom:10px">${CM.icon('image',{size:15})} 把 ${legacy} 张历史照片迁入云端存储</button>` : ''}
       <button class="btn ghost" id="ac-out" style="width:100%;justify-content:center">${CM.icon('logout',{size:15})} 退出登录</button>
     `,{onMount:(body,close)=>{
-      // 立即同步并刷新：补登→把待传队列全部推上去→再以云端为准重新拉取（强制跨设备收敛）
+      // 立即同步并刷新：强制重登拿新 token→把待传队列全部推上去→以云端为准重拉（强制跨设备收敛，且解决 token 失效卡死）
       body.querySelector('#ac-flush').onclick=async()=>{
-        const fb=body.querySelector('#ac-flush'); fb.disabled=true; const t0=performance.now();
-        fb.innerHTML=`${CM.icon('cloud',{size:15})} 同步中…`;
-        try{
-          if(!CM.cloud.user){ try{ const s=await CM.cloud.autoLogin(); if(s&&s.user) await onAuth(s); }catch(e){} }
-          await CM.store.flushQueue();
-          const remote=await CM.cloud.fetchAll(); CM.store.mergeRemote(remote); _lastSync=Date.now();
-        }catch(e){ console.warn('flush',e); }
-        refresh(); renderSync(); close();
-        const left=CM.store.pendingSync();
-        toast(left ? `还有 ${left} 条没传上去（检查登录/网络后再点一次）` : `已与云端同步一致 · ${((performance.now()-t0)/1000).toFixed(1)}s`);
+        const fb=body.querySelector('#ac-flush'); fb.disabled=true; fb.innerHTML=`${CM.icon('cloud',{size:15})} 同步中…`;
+        await forceSync(); close();
       };
       const sb=body.querySelector('#ac-sync'); if(sb) sb.onclick=async()=>{ await syncLocal(); close(); };
       const mig=body.querySelector('#ac-mig');
@@ -939,6 +951,6 @@ CM.app = (function(){
 
   return { init, switchView, openForm, openRecord, editRecord:id=>openForm({},id), deleteRecord:id=>{ if(confirm('删除这条记录？')){CM.store.remove(id); while(modalStack.length){const s=modalStack.pop();s.classList.remove('show');setTimeout(()=>s.remove(),250);} refresh(); toast('已删除');} },
     openKnowledge, filterBy, clearFilter, shareRecord, openWrapped, openBlind, exportData, importData, clearAll, refresh,
-    migrateLegacyPhotos, legacyPhotoCount:_legacyPhotoCount, backgroundUploadPhotos };
+    migrateLegacyPhotos, legacyPhotoCount:_legacyPhotoCount, backgroundUploadPhotos, forceSync };
 })();
 document.addEventListener('DOMContentLoaded',CM.app.init);

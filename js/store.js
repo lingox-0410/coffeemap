@@ -52,14 +52,17 @@ CM.store = (function(){
   function _persistRemove(id){ _saveMirror(); if(mode==='cloud'){ _enqueue({op:'remove',id}); _cloudRemove(id); } }
 
   async function flushQueue(){
-    if(mode!=='cloud' || !(CM.cloud && CM.cloud.user)) return;
-    const q=_queue(); if(!q.length) return;
+    if(mode!=='cloud' || !(CM.cloud && CM.cloud.user)) return { skipped:true };
+    const q=_queue(); if(!q.length) return { done:0, failed:0 };
     document.dispatchEvent(new CustomEvent('cm:syncstart'));
+    let done=0, failed=0, lastError=null;
     for(const item of q){
-      try{ if(item.op==='remove') await CM.cloud.remove(item.id); else await CM.cloud.upsert(item.rec); _dequeue(item.id); }
-      catch(e){ /* 保留，下次再试 */ }
+      try{ if(item.op==='remove') await CM.cloud.remove(item.id); else await CM.cloud.upsert(item.rec); _dequeue(item.id); done++; }
+      catch(e){ failed++; lastError=e; }   // 保留，下次再试
     }
     _synced();
+    if(failed) document.dispatchEvent(new CustomEvent('cm:cloudError',{detail:lastError}));   // 把真实失败暴露出来，不再假装"同步中"
+    return { done, failed, lastError: lastError && (lastError.message||String(lastError)) };
   }
 
   return {

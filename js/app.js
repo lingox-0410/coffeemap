@@ -418,7 +418,8 @@ CM.app = (function(){
     ['dragleave','drop'].forEach(ev=>drop.addEventListener(ev,e=>{e.preventDefault();drop.classList.remove('over');}));
     drop.addEventListener('drop',async e=>{ for(const f of e.dataTransfer.files){ if(f.type.startsWith('image/')) photos.push(await CM.resizeImage(f)); } paintThumbs(); });
 
-    m.body.querySelector('#f-save').onclick=()=>{
+    const saveBtn=m.body.querySelector('#f-save');
+    saveBtn.onclick=async()=>{
       const rec={
         id:editId||undefined, createdAt:editId?r.createdAt:Date.now(),
         name:m.body.querySelector('#f-name').value.trim(),
@@ -434,6 +435,8 @@ CM.app = (function(){
         score, notes:m.body.querySelector('#f-notes').value.trim(), photos,
       };
       if(!rec.origin){ toast('请选择国家/产区'); return; }
+      saveBtn.disabled=true; saveBtn.textContent='保存中…';
+      try{ rec.photos = await uploadPhotos(photos); }catch(e){ console.warn('photos',e); }  // 登录态把照片传存储桶→只存URL；失败退回原样不丢
       if(editId) CM.store.update(editId,rec); else CM.store.add(rec);
       m.close(); refresh(); toast(editId?'已更新':'已记录 · 干得漂亮');
     };
@@ -701,6 +704,16 @@ CM.app = (function(){
   function pendingLocal(){
     const cloudIds=new Set(CM.store.all().map(r=>r.id));
     return localGuestRecords().filter(r=> !cloudIds.has(r.id));
+  }
+  async function uploadPhotos(photos){
+    if(!(CM.cloud && CM.cloud.user)) return photos;            // 未登录：照片保持 base64(本地)
+    const out=[];
+    for(const p of (photos||[])){
+      if(typeof p==='string' && p.startsWith('data:')){
+        try{ out.push(await CM.cloud.uploadPhoto(p)); }catch(e){ console.warn('uploadPhoto',e); out.push(p); }   // 失败退回 base64，不丢
+      } else out.push(p);                                       // 已是 URL → 原样保留
+    }
+    return out;
   }
   async function uploadRecords(records){
     let ok=0; for(const r of records){ try{ await CM.cloud.upsert(r); ok++; }catch(e){ console.error('upload',e); } }

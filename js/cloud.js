@@ -113,5 +113,15 @@ CM.cloud = (function(){
       const { error } = await client.from('records').delete().eq('id', id);
       if(error) throw error;
     },
+    // 把 base64 照片上传到 Storage 存储桶，返回公开 URL（记录里只存 URL，不再塞 base64）
+    async uploadPhoto(dataUrl){
+      if(!user) throw new Error('未登录');
+      const blob = await (await fetch(dataUrl)).blob();
+      const ext = ((blob.type.split('/')[1]) || 'jpg').replace('jpeg','jpg');
+      const path = user.id + '/' + Date.now().toString(36) + Math.random().toString(36).slice(2,8) + '.' + ext;
+      const { error } = await client.storage.from('photos').upload(path, blob, { contentType: blob.type||'image/jpeg', upsert:false });
+      if(error) throw error;
+      return client.storage.from('photos').getPublicUrl(path).data.publicUrl;
+    },
   };
 })();

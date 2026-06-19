@@ -22,7 +22,12 @@ CM.store = (function(){
     cache.sort((a,b)=> (b.tastedAt||'').localeCompare(a.tastedAt||'') || ((b.createdAt||0)-(a.createdAt||0)));
     document.dispatchEvent(new CustomEvent('cm:changed'));
   }
-  const _stripPhotos = r => (r && r.photos) ? (()=>{ const {photos, ...rest}=r; return rest; })() : r;
+  // 镜像里只丢掉大体积的 base64 照片，保留已上传的照片 URL(很小)——这样卡片本地也能显示照片
+  const _stripPhotos = r => {
+    if(!r || !r.photos || !r.photos.length) return r;
+    const kept = r.photos.filter(p => typeof p==='string' && !p.startsWith('data:'));
+    return { ...r, photos: kept };
+  };
   // 本地镜像【不存 base64 照片】——否则几十张照片就撑爆 localStorage 配额(手机 webview 常只有 2.5~5MB)，导致“只能存十几条”。
   // 照片保存在：内存(当前会话显示) + 云端 data(跨浏览器) + 待传队列(未同步时)。
   function _saveMirror(){ _write(mirrorKey(), cache.map(_stripPhotos)); }

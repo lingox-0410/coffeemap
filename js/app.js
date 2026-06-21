@@ -358,6 +358,13 @@ CM.app = (function(){
     const c=document.getElementById('view-passport'); const recs=CM.store.all();
     const got=new Set(recs.map(r=>r.origin));
     const ach=achievements(recs);
+    // 风味集邮册 / 大洲进度 / 寻豆清单
+    const usedFlavors=new Set(recs.flatMap(r=>r.flavors||[]));
+    const coll=CM.flavorGroups.map(g=>({g,got:g.items.filter(it=>usedFlavors.has(it)).length,total:g.items.length}));
+    const contStat={}; CM.origins.forEach(o=>{ if(!o.continent)return; (contStat[o.continent]=contStat[o.continent]||{total:0,got:0}).total++; if(got.has(o.key)) contStat[o.continent].got++; });
+    const triedV=new Set(recs.flatMap(r=>r.varieties||[])), triedP=new Set(recs.flatMap(r=>r.processes||[])), triedO=new Set(recs.map(r=>r.origin));
+    const newV=CM.varieties.filter(v=>!triedV.has(v.id)).slice(0,14), newP=CM.processes.filter(p=>!triedP.has(p.id)), newO=CM.origins.filter(o=>!triedO.has(o.key)).slice(0,14);
+    const wl=(label,items,type,kf,nf)=> items.length?`<div class="wl-g"><div class="wl-h">${label} <span class="opt">还差 ${items.length}</span></div><div class="wrap-tags">${items.map(it=>`<span class="tag ghost" data-kt="${type}" data-kk="${CM.esc(kf(it))}" style="cursor:pointer">${nf(it)} ${CM.icon('chevronRight',{size:12})}</span>`).join('')}</div></div>`:'';
     c.innerHTML=`
       <div class="hero"><h1>咖啡 <span class="grad">护照</span></h1><p>你已集齐 ${got.size} / ${CM.origins.length} 个产地印章</p></div>
       <div class="flex gap12 mt16" style="justify-content:center;flex-wrap:wrap">
@@ -370,7 +377,17 @@ CM.app = (function(){
           <span class="em">${CM.flag(o.key,'flag-lg')}</span><span class="nm">${o.cn}</span><span class="ct">${g?ct+' 杯':'未解锁'}</span></div>`;}).join('')}</div>
       <div class="section-head mt40"><h2>成就</h2><div class="sub">${ach.filter(a=>a.got).length} / ${ach.length} 已达成</div></div>
       <div class="grid" style="grid-template-columns:repeat(auto-fill,minmax(220px,1fr))">
-        ${ach.map(a=>`<div class="ach ${a.got?'':'locked'}"><div class="ic" style="color:var(--accent)">${CM.icon(a.icon,{size:24})}</div><div class="meta"><div class="t">${a.title}</div><div class="d">${a.desc}</div>${(a.progress&&!a.got)?`<div class="ach-prog"><span style="width:${Math.round(100*a.progress.cur/a.progress.need)}%"></span></div>`:''}</div></div>`).join('')}</div>`;
+        ${ach.map(a=>`<div class="ach ${a.got?'':'locked'}"><div class="ic" style="color:var(--accent)">${CM.icon(a.icon,{size:24})}</div><div class="meta"><div class="t">${a.title}</div><div class="d">${a.desc}</div>${(a.progress&&!a.got)?`<div class="ach-prog"><span style="width:${Math.round(100*a.progress.cur/a.progress.need)}%"></span></div>`:''}</div></div>`).join('')}</div>
+
+      <div class="section-head mt40"><h2>风味集邮册</h2><div class="sub">点亮 13 大风味类别 · 点开看知识</div></div>
+      <div class="card" style="padding:22px"><div class="collection">${coll.map(x=>{const lit=x.got>0;const a=lit?(.25+.75*x.got/x.total):0;
+        return `<div class="cell ${lit?'lit':''}" data-kt="flavor" data-kk="${x.g.id}" title="${x.g.cn} ${x.got}/${x.total}" style="${lit?`background:${hexA(x.g.color,a)};color:${a>.55?'#fff':'var(--ink-2)'}`:''}"><b>${x.got}/${x.total}</b>${x.g.cn}</div>`;}).join('')}</div></div>
+
+      <div class="section-head mt40"><h2>大洲进度</h2><div class="sub">咖啡带版图</div></div>
+      <div class="card" style="padding:22px"><div class="cont-prog">${Object.entries(contStat).map(([cn,s])=>`<div class="cprow"><span class="cl">${cn}</span><div class="ctrack"><span style="width:${Math.round(100*s.got/s.total)}%"></span></div><span class="cn2">${s.got}/${s.total}</span></div>`).join('')}</div></div>
+
+      ${(newV.length||newP.length||newO.length)?`<div class="section-head mt40"><h2>寻豆清单</h2><div class="sub">还没喝过的 · 点开了解，下一支去试试</div></div>
+        <div class="card" style="padding:22px"><div class="wishlist">${wl('豆种',newV,'variety',v=>v.id,v=>CM.esc(v.cn))}${wl('处理法',newP,'process',p=>p.id,p=>CM.esc(p.cn))}${wl('产地',newO,'origin',o=>o.key,o=>CM.flag(o.key)+' '+CM.esc(o.cn))}</div></div>`:''}`;
   }
   function achievements(recs){
     const n=recs.length, has=fn=>recs.some(fn);

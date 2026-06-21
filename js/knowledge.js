@@ -40,12 +40,12 @@ CM.knowledge = (function(){
   function relatedStats(type, key, records){
     const match = r=>{
       switch(type){
-        case 'origin': return r.origin===key;
+        case 'origin': return CM.listOf(r,'origins','origin').includes(key);
         case 'variety': return (r.varieties||[]).includes(key);
         case 'process': return (r.processes||[]).includes(key);
-        case 'roast': return r.roast===key;
-        case 'brew': return r.brew===key;
-        case 'altitude': return r.altitude===key;
+        case 'roast': return CM.listOf(r,'roasts','roast').includes(key);
+        case 'brew': return CM.listOf(r,'brews','brew').includes(key);
+        case 'altitude': return CM.listOf(r,'altitudes','altitude').includes(key);
         case 'flavor':{ const g=CM.find.flavorOf(key)||CM.find.flavorGroup(key);
           return (r.flavors||[]).some(f=> f===key || (g&&g.items.includes(f))); }
       }

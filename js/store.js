@@ -112,6 +112,9 @@ CM.store = (function(){
 /* ---------- 通用助手 ---------- */
 CM.uid = () => 'r' + Math.abs(Date.now() ^ (performance.now()*1000|0)).toString(36) + (CM._n=(CM._n||0)+1);
 
+// 多选字段读取：优先复数数组(origins/roasts/...)，回退到旧的单数标量(origin/roast/...)。拼配豆等多值场景统一走这里。
+CM.listOf = (r, plural, singular)=> (r && Array.isArray(r[plural]) && r[plural].length) ? r[plural] : ((r && r[singular]) ? [r[singular]] : []);
+
 CM.esc = s => String(s==null?'':s).replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 
 CM.STAR_PATH = 'M12 2.4l2.9 6.1 6.7.9-4.9 4.7 1.2 6.7L12 18.5l-5.9 3.3 1.2-6.7L2.4 9.4l6.7-.9z';
@@ -141,12 +144,12 @@ CM.resizeImage = (file, max=960)=> new Promise((res,rej)=>{
 /* 把一条记录里所有"标签型"字段拼成可搜索文本 */
 CM.recordText = r => [
   r.name, r.estate, r.shop, r.notes,
-  (CM.find.origin(r.origin)||{}).cn, r.origin,
+  ...CM.listOf(r,'origins','origin').flatMap(k=>[(CM.find.origin(k)||{}).cn, k]),
   ...(r.regions||[]),
   ...(r.varieties||[]).map(v=>(CM.find.variety(v)||{}).cn||v),
   ...(r.processes||[]).map(p=>(CM.find.process(p)||{}).cn||p),
-  (CM.find.roast(r.roast)||{}).cn,
-  (CM.find.brew(r.brew)||{}).cn,
+  ...CM.listOf(r,'roasts','roast').map(k=>(CM.find.roast(k)||{}).cn),
+  ...CM.listOf(r,'brews','brew').map(k=>(CM.find.brew(k)||{}).cn),
   ...(r.flavors||[]),
 ].filter(Boolean).join(' ').toLowerCase();
 

@@ -4,6 +4,9 @@
 window.CM = window.CM || {};
 CM.app = (function(){
   let state = { view:'map', search:'', filter:null, mapMetric:'count', selectedOrigin:null, blind:null };
+  // 多选字段读取（拼配豆等）：复数数组优先，回退单数标量
+  const originsOf=r=>CM.listOf(r,'origins','origin'), roastsOf=r=>CM.listOf(r,'roasts','roast'),
+        altsOf=r=>CM.listOf(r,'altitudes','altitude'), brewsOf=r=>CM.listOf(r,'brews','brew');
 
   /* ---------------- 选项表 ---------------- */
   const OPT = {
@@ -130,12 +133,13 @@ CM.app = (function(){
     const pTags=(r.processes||[]).slice(0,3).map(p=>{const x=CM.find.process(p);return ktag('process',p,x?x.cn.split(' ')[0]:p,x&&x.color);}).join('');
     const rTag = roast?ktag('roast',r.roast,roast.cn.split(' ')[0],roast.color):'';
     const fTags=(r.flavors||[]).slice(0,4).map(f=>{const g=CM.find.flavorOf(f);return ktag('flavor',f,f,g&&g.color);}).join('');
-    const groups = tgRow('豆种',vTags)+tgRow('处理',pTags)+tgRow('烘焙',rTag)+tgRow('风味',fTags);
+    const oTags = originsOf(r).length>1 ? originsOf(r).map(k=>{const x=CM.find.origin(k);return ktag('origin',k,x?x.cn:k);}).join('') : '';   // 拼配豆才单列产地组
+    const groups = tgRow('产地',oTags)+tgRow('豆种',vTags)+tgRow('处理',pTags)+tgRow('烘焙',rTag)+tgRow('风味',fTags);
     const brewName = brew?brew.cn.split('·').pop().trim():'';
     return `<div class="card rec" data-rec="${r.id}">
       <div class="photo ${photo?'':'placeholder'}" style="${photo?`background-image:url('${photo}')`:''}">
         ${photo?'':`<div class="emoji" style="color:var(--accent)">${CM.icon('cup',{size:50,stroke:1.4})}</div>`}
-        <span class="flag">${CM.flag(o.key)} ${CM.esc(o.cn||'自定义')}</span>
+        <span class="flag">${CM.flag(o.key)} ${CM.esc(o.cn||'自定义')}${originsOf(r).length>1?` +${originsOf(r).length-1}`:''}</span>
         <span class="score">${(r.score||0).toFixed(1)} ${CM.starSVG('#ffce63',12)}</span>
       </div>
       <div class="body">
@@ -151,7 +155,7 @@ CM.app = (function(){
     const c=document.getElementById('view-map'); const recs=CM.store.all();
     c.innerHTML=`
       <div class="hero"><h1>你的 <span class="grad">咖啡风味地图</span></h1>
-        <p>已经品鉴 ${recs.length} 杯，足迹遍及 ${new Set(recs.map(r=>r.origin)).size} 个产地</p></div>
+        <p>已经品鉴 ${recs.length} 杯，足迹遍及 ${new Set(recs.flatMap(r=>originsOf(r))).size} 个产地</p></div>
       <div class="section-head">
         <div class="seg" id="mapSeg">
           <button data-m="count" class="${state.mapMetric==='count'?'active':''}">按数量</button>
@@ -167,7 +171,7 @@ CM.app = (function(){
   }
   function selectOrigin(key){
     state.selectedOrigin=key;
-    const o=CM.find.origin(key); const recs=CM.store.all().filter(r=>r.origin===key);
+    const o=CM.find.origin(key); const recs=CM.store.all().filter(r=>originsOf(r).includes(key));
     const d=document.getElementById('mapDetail'); if(!d) return;
     d.innerHTML=`<div class="card" style="padding:24px">
       <div class="flex gap12" style="justify-content:space-between;align-items:flex-start;flex-wrap:wrap">
@@ -216,7 +220,7 @@ CM.app = (function(){
     const mt=(arr,type,mapper)=>`<div class="mini-tags">${(arr||[]).slice(0,3).map(mapper).join('')||'—'}</div>`;
     return `<tr data-rec="${r.id}" style="cursor:pointer">
       <td><b>${CM.esc(r.name||'—')}</b></td>
-      <td><span class="flex" style="align-items:center;gap:6px">${CM.flag(r.origin)} ${o.cn||'—'}</span></td>
+      <td><span class="flex" style="align-items:center;gap:6px">${CM.flag(r.origin)} ${o.cn||'—'}${originsOf(r).length>1?` <span class="muted">+${originsOf(r).length-1}</span>`:''}</span></td>
       <td>${mt(r.varieties,'variety',v=>{const x=CM.find.variety(v);return ktag('variety',v,x?x.cn.split(' ')[0]:v);})}</td>
       <td>${mt(r.processes,'process',p=>{const x=CM.find.process(p);return ktag('process',p,x?x.cn.split(' ')[0]:p,x&&x.color);})}</td>
       <td>${roast?ktag('roast',r.roast,roast.cn.split(' ')[0],roast.color):'—'}</td>
@@ -234,14 +238,14 @@ CM.app = (function(){
     if(!recs.length){ c.innerHTML=emptyState(); return; }
     const scored=recs.filter(r=>r.score);
     const avg=scored.reduce((s,r)=>s+r.score,0)/(scored.length||1);
-    const byOrigin=CM.aggregate(recs,r=>r.origin);
+    const byOrigin=CM.aggregate(recs,r=>originsOf(r));
     const best=byOrigin.slice().sort((a,b)=>b.avg-a.avg)[0];
     const fp=prefFingerprint(recs), lg=ledger(recs);
     c.innerHTML=`
       <div class="section-head"><h2>统计</h2><div class="sub">多维度数量与评分</div></div>
       <div class="grid stat-grid">
         <div class="stat"><div class="k">总品鉴</div><div class="v">${recs.length}<small>杯</small></div><div class="foot">含 ${scored.length} 杯评分</div></div>
-        <div class="stat"><div class="k">覆盖产地</div><div class="v">${new Set(recs.map(r=>r.origin)).size}<small>国</small></div><div class="foot">共 ${CM.origins.length} 个咖啡产地</div></div>
+        <div class="stat"><div class="k">覆盖产地</div><div class="v">${new Set(recs.flatMap(r=>originsOf(r))).size}<small>国</small></div><div class="foot">共 ${CM.origins.length} 个咖啡产地</div></div>
         <div class="stat"><div class="k">平均风味分</div><div class="v">${avg.toFixed(2)}<small>分</small></div><div class="foot">${CM.starHTML(Math.round(avg*2)/2)}</div></div>
         <div class="stat"><div class="k">最爱产地</div><div class="v" style="font-size:24px;margin-top:12px;display:flex;align-items:center;gap:8px">${best?(CM.flag(best.key,'flag-lg')+' '+CM.find.origin(best.key).cn):'—'}</div><div class="foot">${best?'均分 '+best.avg.toFixed(1)+' · '+best.count+' 杯':''}</div></div>
       </div>
@@ -284,10 +288,10 @@ CM.app = (function(){
     const byProc=CM.aggregate(recs,r=>r.processes||[]);
     document.getElementById('ch-process').appendChild(CM.charts.donut(byProc.map(d=>{const p=CM.find.process(d.key);return{key:d.key,label:p?p.cn:d.key,value:d.count,color:p?p.color:'#ccc'};}),{centerSub:'记录',onClick:k=>openKnowledge('process',k)}));
     // donut roast
-    const byRoast=CM.aggregate(recs,r=>r.roast);
+    const byRoast=CM.aggregate(recs,r=>roastsOf(r));
     document.getElementById('ch-roast').appendChild(CM.charts.donut(byRoast.map(d=>{const x=CM.find.roast(d.key);return{key:d.key,label:x?x.cn:d.key,value:d.count,color:x?x.color:'#ccc'};}),{centerSub:'记录',onClick:k=>openKnowledge('roast',k)}));
     // bars brew
-    const byBrew=CM.aggregate(recs,r=>r.brew);
+    const byBrew=CM.aggregate(recs,r=>brewsOf(r));
     document.getElementById('ch-brew').appendChild(CM.charts.bars(byBrew.map(d=>{const b=CM.find.brew(d.key);return{label:b?b.cn:d.key,emoji:CM.icon('cup',{size:14}),value:d.count,display:d.count};})));
     // bars score by origin
     document.getElementById('ch-score').appendChild(CM.charts.bars(byOrigin.filter(d=>d.avg).slice(0,8).map(d=>{const o=CM.find.origin(d.key);return{label:o.cn,emoji:CM.flag(d.key),value:+d.avg.toFixed(2),display:d.avg.toFixed(1),color:'#e0a73a'};})));
@@ -318,7 +322,7 @@ CM.app = (function(){
     const overall=scored.reduce((s,r)=>s+r.score,0)/scored.length;
     const dims=[
       {label:p=>(CM.find.process(p)||{}).cn||p, gen:r=>r.processes||[]},
-      {label:p=>(CM.find.roast(p)||{}).cn||p, gen:r=>r.roast},
+      {label:p=>(CM.find.roast(p)||{}).cn||p, gen:r=>roastsOf(r)},
       {label:p=>(CM.find.variety(p)||{}).cn||p, gen:r=>r.varieties||[]},
       {label:p=>(CM.find.flavorGroup(p)||{}).cn||p, gen:r=>[...new Set((r.flavors||[]).map(f=>(CM.find.flavorOf(f)||{}).id).filter(Boolean))]},
     ];
@@ -364,7 +368,7 @@ CM.app = (function(){
     const liked=recs.filter(r=>r.score>=4); if(liked.length<2) return [];
     const gw={}; liked.forEach(r=>(r.flavors||[]).forEach(f=>{const g=CM.find.flavorOf(f); if(g)gw[g.id]=(gw[g.id]||0)+r.score;}));
     const topGroups=Object.entries(gw).sort((a,b)=>b[1]-a[1]).map(e=>e[0]); const top1=topGroups[0];
-    const triedO=new Set(recs.map(r=>r.origin)), triedV=new Set(recs.flatMap(r=>r.varieties||[]));
+    const triedO=new Set(recs.flatMap(r=>originsOf(r))), triedV=new Set(recs.flatMap(r=>r.varieties||[]));
     const procAgg=CM.aggregate(recs.filter(r=>r.score),r=>r.processes||[]).filter(a=>a.scoreN>=2).sort((a,b)=>b.avg-a.avg);
     const out=[];
     const candO=CM.origins.filter(o=>!triedO.has(o.key)&&CM.originFlavorHint[o.key])
@@ -382,13 +386,13 @@ CM.app = (function(){
   function renderPassport(){
     const c=document.getElementById('view-passport'); const recs=CM.store.all();
     const rl=recommend(recs);
-    const got=new Set(recs.map(r=>r.origin));
+    const got=new Set(recs.flatMap(r=>originsOf(r)));
     const ach=achievements(recs);
     // 风味集邮册 / 大洲进度 / 寻豆清单
     const usedFlavors=new Set(recs.flatMap(r=>r.flavors||[]));
     const coll=CM.flavorGroups.map(g=>({g,got:g.items.filter(it=>usedFlavors.has(it)).length,total:g.items.length}));
     const contStat={}; CM.origins.forEach(o=>{ if(!o.continent)return; (contStat[o.continent]=contStat[o.continent]||{total:0,got:0}).total++; if(got.has(o.key)) contStat[o.continent].got++; });
-    const triedV=new Set(recs.flatMap(r=>r.varieties||[])), triedP=new Set(recs.flatMap(r=>r.processes||[])), triedO=new Set(recs.map(r=>r.origin));
+    const triedV=new Set(recs.flatMap(r=>r.varieties||[])), triedP=new Set(recs.flatMap(r=>r.processes||[])), triedO=new Set(recs.flatMap(r=>originsOf(r)));
     const newV=CM.varieties.filter(v=>!triedV.has(v.id)).slice(0,14), newP=CM.processes.filter(p=>!triedP.has(p.id)), newO=CM.origins.filter(o=>!triedO.has(o.key)).slice(0,14);
     const wl=(label,items,type,kf,nf)=> items.length?`<div class="wl-g"><div class="wl-h">${label} <span class="opt">还差 ${items.length}</span></div><div class="wrap-tags">${items.map(it=>`<span class="tag ghost" data-kt="${type}" data-kk="${CM.esc(kf(it))}" style="cursor:pointer">${nf(it)} ${CM.icon('chevronRight',{size:12})}</span>`).join('')}</div></div>`:'';
     c.innerHTML=`
@@ -405,7 +409,7 @@ CM.app = (function(){
             <span style="color:var(--ink-3);flex:none">${CM.icon('chevronRight',{size:16})}</span></div>`).join('')}
         </div>`:''}
       <div class="section-head mt40"><h2>世界产地印章</h2><div class="sub">点亮你喝过的每一个国家</div></div>
-      <div class="grid stamp-grid">${CM.origins.map(o=>{const g=got.has(o.key);const ct=recs.filter(r=>r.origin===o.key).length;
+      <div class="grid stamp-grid">${CM.origins.map(o=>{const g=got.has(o.key);const ct=recs.filter(r=>originsOf(r).includes(o.key)).length;
         return `<div class="stamp ${g?'got':''}" ${g?`onclick="CM.app.openKnowledge('origin','${o.key}')" style="cursor:pointer"`:''}>
           <span class="em">${CM.flag(o.key,'flag-lg')}</span><span class="nm">${o.cn}</span><span class="ct">${g?ct+' 杯':'未解锁'}</span></div>`;}).join('')}</div>
       <div class="section-head mt40"><h2>成就</h2><div class="sub">${ach.filter(a=>a.got).length} / ${ach.length} 已达成</div></div>
@@ -424,12 +428,12 @@ CM.app = (function(){
   }
   function achievements(recs){
     const n=recs.length, has=fn=>recs.some(fn);
-    const origins=new Set(recs.map(r=>r.origin).filter(Boolean));
+    const origins=new Set(recs.flatMap(r=>originsOf(r)));
     const procs=new Set(recs.flatMap(r=>r.processes||[]));
     const varis=new Set(recs.flatMap(r=>r.varieties||[]));
-    const brews=new Set(recs.map(r=>r.brew).filter(Boolean));
+    const brews=new Set(recs.flatMap(r=>brewsOf(r)));
     const flavs=new Set(recs.flatMap(r=>r.flavors||[]));
-    const conts=new Set(recs.map(r=>(CM.find.origin(r.origin)||{}).continent).filter(Boolean));
+    const conts=new Set(recs.flatMap(r=>originsOf(r)).map(k=>(CM.find.origin(k)||{}).continent).filter(Boolean));
     const allConts=new Set(CM.origins.map(o=>o.continent).filter(Boolean));
     const grp=new Set(); recs.forEach(r=>(r.flavors||[]).forEach(f=>{const g=CM.find.flavorOf(f); if(g)grp.add(g.id);}));
     const washedN=recs.filter(r=>(r.processes||[]).includes('washed')).length;
@@ -461,7 +465,7 @@ CM.app = (function(){
       T('book','配方记录者','记录冲煮配方',recipeN,10,' 份'),
       F('flower','瑰夏猎人','品鉴过瑰夏 Geisha',varis.has('geisha')),
       F('sparkle','五星时刻','给出过一杯满分 5★',has(r=>r.score>=5)),
-      F('flame','深烘也懂','记录过中深 / 深烘',has(r=>['mediumdark','dark'].includes(r.roast))),
+      F('flame','深烘也懂','记录过中深 / 深烘',has(r=>roastsOf(r).some(x=>['mediumdark','dark'].includes(x)))),
       F('flask','厌氧实验家','尝试过厌氧 / CM / 双重发酵',[...procs].some(p=>['anaerobic','carbonic','doubleferment'].includes(p))),
       F('store','一掷千金','喝过一杯 ≥ ¥100',has(r=>r.price>=100)),
       F('bulb','平价之光','≤ ¥20 喝到 ≥ 4★',has(r=>r.price&&r.price<=20&&r.score>=4)),
@@ -525,13 +529,13 @@ CM.app = (function(){
     `,{wide:true});
 
     const inputs={
-      origin:tagInput({options:OPT.origin,value:r.origin?[r.origin]:[],single:true,allowCustom:true,label:'国家/产区',placeholder:'点击选择国家/产区'}),
+      origin:tagInput({options:OPT.origin,value:originsOf(r),allowCustom:true,label:'国家/产区',placeholder:'点击选择 · 拼配豆可多选'}),
       region:tagInput({options:OPT.region,value:r.regions||[],allowCustom:true,label:'子产区',placeholder:'点击选择/添加子产区'}),
       variety:tagInput({options:OPT.variety,value:r.varieties||[],allowCustom:true,label:'豆种',placeholder:'点击选择豆种'}),
       process:tagInput({options:OPT.process,value:r.processes||[],allowCustom:true,label:'处理法',placeholder:'点击选择处理法'}),
-      roast:tagInput({options:OPT.roast,value:r.roast?[r.roast]:[],single:true,allowCustom:false,label:'烘焙度',placeholder:'点击选择烘焙度'}),
-      altitude:tagInput({options:OPT.altitude,value:r.altitude?[r.altitude]:[],single:true,allowCustom:false,label:'海拔',placeholder:'点击选择海拔'}),
-      brew:tagInput({options:OPT.brew,value:r.brew?[r.brew]:[],single:true,allowCustom:true,label:'冲煮',placeholder:'点击选择冲煮方法'}),
+      roast:tagInput({options:OPT.roast,value:roastsOf(r),allowCustom:false,label:'烘焙度',placeholder:'点击选择 · 可多选'}),
+      altitude:tagInput({options:OPT.altitude,value:altsOf(r),allowCustom:false,label:'海拔',placeholder:'点击选择 · 可多选'}),
+      brew:tagInput({options:OPT.brew,value:brewsOf(r),allowCustom:true,label:'冲煮',placeholder:'点击选择 · 可多选'}),
       flavor:tagInput({options:OPT.flavor,value:r.flavors||[],allowCustom:true,label:'风味',placeholder:'点击选择/添加风味'}),
     };
     Object.entries(inputs).forEach(([k,v])=> m.body.querySelector('#f-'+k).appendChild(v.el));
@@ -578,22 +582,23 @@ CM.app = (function(){
       const rv=k=>{ const v=m.body.querySelector('#f-'+k).value.trim(); return v===''?undefined:v; };
       const recipeO={ dose:rv('dose'), water:rv('water'), ratio:rv('ratio'), grind:rv('grind'), temp:rv('temp'), time:rv('time'), tds:rv('tds') };
       const recipe = Object.values(recipeO).some(v=>v!=null) ? recipeO : undefined;
+      const O=inputs.origin.get(), Rs=inputs.roast.get(), Als=inputs.altitude.get(), Brs=inputs.brew.get();
       const rec={
         id:editId||undefined, createdAt:editId?r.createdAt:Date.now(),
         name:m.body.querySelector('#f-name').value.trim(),
-        origin:inputs.origin.get()[0]||'',
+        origin:O[0]||'', origins:O,                                  // 单数=首项(向后兼容) + 复数数组(拼配豆)
         estate:m.body.querySelector('#f-estate').value.trim(),
         regions:inputs.region.get(), varieties:inputs.variety.get(), processes:inputs.process.get(),
-        roast:inputs.roast.get()[0]||'', altitude:inputs.altitude.get()[0]||'',
+        roast:Rs[0]||'', roasts:Rs, altitude:Als[0]||'', altitudes:Als,
         flavors:inputs.flavor.get(),
         shop:m.body.querySelector('#f-shop').value.trim(),
         tastedAt:m.body.querySelector('#f-date').value,
-        brew:inputs.brew.get()[0]||'',
+        brew:Brs[0]||'', brews:Brs,
         price:parseFloat(m.body.querySelector('#f-price').value)||undefined,
         score, notes:m.body.querySelector('#f-notes').value.trim(), photos:[...photos], recipe,
         aspects: Object.values(aspVals).some(v=>v>0) ? {...aspVals} : undefined,
       };
-      if(!rec.origin){ toast('请选择国家/产区'); return; }
+      if(!O.length){ toast('请选择国家/产区'); return; }
       // 立即保存：本地秒存 + 云端后台补传，照片先以本地图显示——绝不卡“保存中”；随后后台把照片传存储桶、换成 URL
       if(editId) CM.store.update(editId,rec); else CM.store.add(rec);
       m.close(); refresh(); toast(editId?'已更新':'已记录 · 干得漂亮');
@@ -649,7 +654,7 @@ CM.app = (function(){
   function openRecord(id){
     const r=CM.store.get(id); if(!r) return; const o=CM.find.origin(r.origin)||{};
     const sec=(label,html)=>html?`<div class="field"><label>${label}</label><div class="wrap-tags">${html}</div></div>`:'';
-    const roast=CM.find.roast(r.roast), brew=CM.find.brew(r.brew), alt=CM.altitudes.find(a=>a.id===r.altitude);
+    const brew=CM.find.brew(r.brew);
     const body=`
       ${r.photos&&r.photos.length?`<div class="flex gap8" style="overflow:auto;margin-bottom:18px">${r.photos.map(p=>`<img src="${p}" style="height:170px;border-radius:14px">`).join('')}</div>`:''}
       <div class="flex" style="justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:10px">
@@ -658,14 +663,14 @@ CM.app = (function(){
         <div class="score-pill" style="font-size:20px">${CM.starHTML(r.score)} <b>${(r.score||0).toFixed(1)}</b></div>
       </div>
       <div class="divider"></div>
-      ${sec('国家 / 产区', originTag(r.origin)+(r.estate?` <span class="tag ghost">${CM.icon('building',{size:13})} ${CM.esc(r.estate)}</span>`:''))}
+      ${sec(originsOf(r).length>1?'国家 / 产区（拼配）':'国家 / 产区', originsOf(r).map(k=>originTag(k)).join(' ')+(r.estate?` <span class="tag ghost">${CM.icon('building',{size:13})} ${CM.esc(r.estate)}</span>`:''))}
       ${sec('子产区',(r.regions||[]).map(x=>`<span class="tag ghost">${CM.icon('pin',{size:13})} ${CM.esc(x)}</span>`).join(''))}
       ${sec('豆种',(r.varieties||[]).map(v=>{const x=CM.find.variety(v);return ktag('variety',v,x?x.cn:v);}).join(''))}
       ${sec('处理法',(r.processes||[]).map(p=>{const x=CM.find.process(p);return ktag('process',p,x?x.cn:p,x&&x.color);}).join(''))}
-      ${sec('烘焙度 / 海拔',(roast?ktag('roast',r.roast,roast.cn,roast.color):'')+(alt?` ${ktag('altitude',r.altitude,alt.cn)}`:''))}
+      ${sec('烘焙度 / 海拔', roastsOf(r).map(k=>{const x=CM.find.roast(k);return x?ktag('roast',k,x.cn,x.color):'';}).join('')+altsOf(r).map(k=>{const x=CM.altitudes.find(a=>a.id===k);return x?' '+ktag('altitude',k,x.cn):'';}).join(''))}
       ${sec('风味',(r.flavors||[]).map(f=>{const g=CM.find.flavorOf(f);return ktag('flavor',f,f,g&&g.color);}).join(''))}
       ${(r.aspects&&Object.values(r.aspects).some(v=>v))?`<div class="field"><label>五维风味</label><div id="rec-radar" class="center"></div></div>`:''}
-      ${sec('冲煮方法',brew?ktag('brew',r.brew,brew.cn):'')}
+      ${sec('冲煮方法', brewsOf(r).map(k=>{const x=CM.find.brew(k);return ktag('brew',k,x?x.cn:k);}).join(''))}
       ${recipeChips(r)}
       ${extractHintHTML(r)}
       ${timelineHTML(r)}
@@ -717,7 +722,7 @@ CM.app = (function(){
     const year=(recs[0].tastedAt||'').slice(0,4)||new Date().getFullYear();
     const yr=recs.filter(r=>(r.tastedAt||'').startsWith(year));
     const list=yr.length?yr:recs;
-    const byOrigin=CM.aggregate(list,r=>r.origin);
+    const byOrigin=CM.aggregate(list,r=>originsOf(r));
     const byFlavor=CM.aggregate(list,r=>r.flavors||[]);
     const best=list.slice().sort((a,b)=>(b.score||0)-(a.score||0))[0];
     const o=CM.find.origin((byOrigin[0]||{}).key)||{};
@@ -726,7 +731,7 @@ CM.app = (function(){
       <div style="background:linear-gradient(165deg,#2a1d12,#5e3a1e);border-radius:20px;padding:30px;color:#fff;margin-bottom:20px">
         <div style="font-size:13px;letter-spacing:.1em;opacity:.7">YOUR ${year} IN COFFEE</div>
         <div style="font-size:46px;font-weight:700;margin:6px 0">${list.length} 杯</div>
-        <div style="opacity:.85">跨越 ${new Set(list.map(r=>r.origin)).size} 个产地 · ${new Set(list.flatMap(r=>r.flavors||[])).size} 种风味</div>
+        <div style="opacity:.85">跨越 ${new Set(list.flatMap(r=>originsOf(r))).size} 个产地 · ${new Set(list.flatMap(r=>r.flavors||[])).size} 种风味</div>
       </div>
       <div class="grid stat-grid">
         <div class="stat"><div class="k">最常喝产地</div><div class="v" style="font-size:22px;margin-top:10px;display:flex;align-items:center;gap:8px">${CM.flag(o.key,'flag-lg')} ${o.cn||'—'}</div><div class="foot">${(byOrigin[0]||{}).count||0} 杯</div></div>
@@ -748,7 +753,7 @@ CM.app = (function(){
   function nextBlind(holder){
     const recs=CM.store.all().filter(r=>r.origin&&(r.flavors||[]).length);
     const pick=recs[Math.floor((performance.now()*7)%recs.length)];
-    const others=[...new Set(recs.map(r=>r.origin))].filter(k=>k!==pick.origin);
+    const others=[...new Set(recs.flatMap(r=>originsOf(r)))].filter(k=>k!==pick.origin);
     shuffle(others); const opts=shuffle([pick.origin,...others.slice(0,3)]);
     const roast=CM.find.roast(pick.roast);
     holder.innerHTML=`

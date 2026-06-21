@@ -19,9 +19,10 @@ CM.map = (function(){
   function statsByCountry(records){
     const m=new Map();
     records.forEach(r=>{
-      if(!r.origin) return;
-      if(!m.has(r.origin)) m.set(r.origin,{count:0,sum:0,n:0});
-      const o=m.get(r.origin); o.count++; if(r.score){o.sum+=r.score;o.n++;}
+      CM.listOf(r,'origins','origin').forEach(key=>{                 // 拼配豆：每个产地都计入
+        if(!m.has(key)) m.set(key,{count:0,sum:0,n:0});
+        const o=m.get(key); o.count++; if(r.score){o.sum+=r.score;o.n++;}
+      });
     });
     m.forEach(o=> o.avg = o.n? o.sum/o.n : 0);
     return m;

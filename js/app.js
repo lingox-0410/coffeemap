@@ -613,17 +613,29 @@ CM.app = (function(){
     const BN=[['map','地图','map'],['cards','卡片','grid'],['table','明细','list'],['stats','统计','chart'],['album','相册','image'],['passport','护照','book']];
     document.getElementById('botnav').innerHTML=BN.map(([v,label,ic])=>`<button class="tab ${v==='map'?'active':''}" data-v="${v}">${CM.icon(ic,{size:22})}<span>${label}</span></button>`).join('');
     document.getElementById('fabAdd').onclick=()=>openForm();
-    // 全局委托：标签→知识卡，卡片/行→明细
+    // 全局委托：Tab 切换（对动态生成的底部导航也稳）、标签→知识卡，卡片/行→明细
     document.addEventListener('click',e=>{
+      const tab=e.target.closest('.tab[data-v]'); if(tab){ switchView(tab.dataset.v); return; }
       const kt=e.target.closest('[data-kt]'); if(kt){ e.stopPropagation(); openKnowledge(kt.dataset.kt,kt.dataset.kk); return; }
       const rec=e.target.closest('[data-rec]'); if(rec && !e.target.closest('button')){ openRecord(rec.dataset.rec); }
     });
     // 搜索
     const si=document.getElementById('searchInput');
     si.addEventListener('input',()=>{ state.search=si.value; if(state.view==='cards')renderCards(); else if(state.view==='table')renderTable(); else if(state.view==='album')renderAlbum(); else switchView('cards'); });
-    // 导航
-    document.querySelectorAll('.tab').forEach(t=> t.onclick=()=>switchView(t.dataset.v));
     document.getElementById('addBtn').onclick=()=>openForm();
+    // 左右切换 Tab：移动端横向滑动 + 桌面 ← → 方向键
+    const VIEWS=['map','cards','table','stats','album','passport'];
+    function _stepView(dir){ const i=VIEWS.indexOf(state.view); const j=i+dir; if(j>=0 && j<VIEWS.length) switchView(VIEWS[j]); }
+    (function(){
+      const main=document.querySelector('main.wrap')||document.body;
+      let sx=0, sy=0, st=0, on=false, lockNative=false;
+      const hScroll=el=>{ while(el && el!==main){ try{ const cs=getComputedStyle(el); if(/(auto|scroll)/.test(cs.overflowX) && el.scrollWidth>el.clientWidth+4) return true; }catch(e){} el=el.parentElement; } return false; };
+      main.addEventListener('touchstart',e=>{ if(e.touches.length!==1 || modalStack.length){ on=false; return; } const t=e.touches[0]; sx=t.clientX; sy=t.clientY; st=Date.now(); on=true; lockNative=hScroll(e.target); }, {passive:true});
+      main.addEventListener('touchend',e=>{ if(!on) return; on=false; if(lockNative) return; const t=e.changedTouches[0]; const dx=t.clientX-sx, dy=t.clientY-sy;
+        if(Date.now()-st<600 && Math.abs(dx)>70 && Math.abs(dx)>Math.abs(dy)*1.8 && Math.abs(dy)<60) _stepView(dx<0?1:-1); }, {passive:true});   // 左滑→下一个，右滑→上一个
+    })();
+    document.addEventListener('keydown',e=>{ if(modalStack.length) return; const el=e.target, tag=(el&&el.tagName||'').toLowerCase();
+      if(tag==='input'||tag==='textarea'||(el&&el.isContentEditable)) return; if(e.key==='ArrowRight') _stepView(1); else if(e.key==='ArrowLeft') _stepView(-1); });
     document.addEventListener('cm:changed',()=>{ updateCounts(); renderSync(); });
     let _ceT=0; document.addEventListener('cm:cloudError',(e)=>{ _syncFailed=true; const d=e&&e.detail; if(d) _lastCloudErr=(d.message||String(d)); renderSync();
       const n=Date.now(); if(n-_ceT>8000){ _ceT=n; toast('有记录没传上云，已暂存本地，正在自动重试'); } });

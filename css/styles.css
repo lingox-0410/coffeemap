@@ -367,6 +367,20 @@ table.detail td .mini-tags{ display:flex; gap:4px; }
 .wishlist{ display:flex; flex-direction:column; gap:18px; }
 .wl-g .wl-h{ font-size:13px; font-weight:600; color:var(--ink-2); margin-bottom:10px; }
 
+/* 五维细分评分滑块 */
+.aspect-list{ display:flex; flex-direction:column; gap:10px; padding:4px 0 14px; }
+.aspect-row{ display:grid; grid-template-columns:52px 1fr 32px; align-items:center; gap:12px; min-height:40px; }
+.aspect-row .al{ font-size:13px; color:var(--ink); }
+.aspect-row input[type=range]{ width:100%; accent-color:var(--accent); height:26px; cursor:pointer; }
+.aspect-row .av{ font-size:13px; color:var(--ink-2); text-align:right; font-variant-numeric:tabular-nums; }
+
+/* 下一支推荐卡 */
+.rec-card{ display:flex; align-items:center; gap:13px; padding:15px 16px; border-radius:16px; background:#fff; border:1px solid var(--hairline); transition:.16s; }
+.rec-card:hover{ box-shadow:var(--shadow); transform:translateY(-1px); }
+.rec-card .rec-ic{ width:44px; height:44px; border-radius:12px; background:var(--bg-2); display:flex; align-items:center; justify-content:center; color:var(--accent); flex:none; }
+.rec-card .rec-t{ font-weight:600; font-size:14px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.rec-card .rec-r{ font-size:12px; color:var(--ink-2); margin-top:3px; line-height:1.45; }
+
 /* radar */
 .radar-wrap{ display:flex; gap:30px; align-items:center; flex-wrap:wrap; justify-content:center; }
 

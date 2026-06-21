@@ -244,6 +244,19 @@ CM.extractSignal = {
   over:  ['苦','发苦','焦','焦苦','烟熏','烟','木','雪松','空洞','干涩','灰','谷物','烤糊','涩'], // 过萃倾向
 };
 
+/* ---------- 产地典型风味组（用于"下一支推荐"的吻合度）---------- */
+CM.originFlavorHint = {
+  Ethiopia:['floral','berry','citrus'], Kenya:['berry','citrus','tropical'], Rwanda:['floral','citrus','berry'],
+  Burundi:['berry','citrus','floral'], Tanzania:['berry','citrus','chocolate'], Uganda:['chocolate','nutty','caramel'],
+  Colombia:['caramel','chocolate','stonefruit'], Brazil:['nutty','chocolate','caramel'], Panama:['floral','citrus','stonefruit'],
+  Guatemala:['chocolate','caramel','spice'], 'Costa Rica':['citrus','caramel','stonefruit'], Honduras:['caramel','nutty','stonefruit'],
+  'El Salvador':['caramel','stonefruit','chocolate'], Nicaragua:['nutty','caramel','chocolate'], Peru:['nutty','chocolate','caramel'],
+  Mexico:['nutty','chocolate','caramel'], Bolivia:['floral','stonefruit','caramel'], Ecuador:['floral','stonefruit','chocolate'],
+  Jamaica:['nutty','chocolate','caramel'], Indonesia:['chocolate','spice','herbal'], India:['spice','chocolate','nutty'],
+  Vietnam:['chocolate','nutty','roasted'], China:['nutty','chocolate','caramel'], 'Papua New Guinea':['chocolate','tropical','herbal'],
+  Yemen:['driedfruit','chocolate','fermented'],
+};
+
 /* ---------- 查找助手 ---------- */
 CM.find = {
   origin: k => CM.origins.find(o => o.key===k || o.cn===k),

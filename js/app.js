@@ -254,6 +254,7 @@ CM.app = (function(){
         <div class="card" style="padding:22px"><h4 class="muted" style="margin-bottom:14px">冲煮方法</h4><div id="ch-brew"></div></div>
         <div class="card" style="padding:22px"><h4 class="muted" style="margin-bottom:14px">产地 · 平均评分</h4><div id="ch-score"></div></div>
         <div class="card" style="padding:22px"><h4 class="muted" style="margin-bottom:14px">风味 DNA 雷达</h4><div id="ch-radar" class="center"></div></div>
+        ${recs.some(r=>r.aspects&&Object.values(r.aspects).some(v=>v))?`<div class="card" style="padding:22px"><h4 class="muted" style="margin-bottom:14px">五维口味雷达 · 总体</h4><div id="ch-aspect" class="center"></div></div>`:''}
       </div>
 
       <div class="section-head mt40"><h2>风味热力图</h2><div class="sub">13 大风味类别的偏好强度 · 点击看知识</div></div>
@@ -295,6 +296,10 @@ CM.app = (function(){
     const axes=CM.flavorGroups.map(g=>({label:g.cn,color:g.color,emoji:''}));
     const series=[{name:'你',color:'#8a5a2b',values:CM.flavorGroups.map(g=>(fg.find(x=>x.id===g.id)?.count||0)/maxg)}];
     document.getElementById('ch-radar').appendChild(CM.charts.radar(axes,series,300));
+    // K: 五维口味总体雷达
+    const withAsp=recs.filter(r=>r.aspects&&Object.values(r.aspects).some(v=>v)); const aspEl=document.getElementById('ch-aspect');
+    if(withAsp.length && aspEl){ const mean=CM.scoreAspects.map(a=>{ const vs=withAsp.map(r=>r.aspects[a.id]||0).filter(v=>v>0); return vs.length?vs.reduce((s,v)=>s+v,0)/vs.length:0; });
+      aspEl.appendChild(CM.charts.radar(CM.scoreAspects.map(a=>({label:a.cn,color:'#8a5a2b'})),[{name:'总体',color:'#8a5a2b',values:mean.map(v=>v/5)}],260)); }
     // heatmap
     const heat=document.getElementById('heat'); const fc=flavorGroupCounts(recs); const maxc=Math.max(1,...fc.map(g=>g.count));
     heat.innerHTML=CM.flavorGroups.map(g=>{ const ct=fc.find(x=>x.id===g.id)?.count||0; const a=ct?(.2+.8*ct/maxc):0;
@@ -354,8 +359,29 @@ CM.app = (function(){
   }
 
   /* ================= 视图：护照 ================= */
+  // 下一支该喝什么：用高分记录建口味画像，对未试目录按吻合度推荐
+  function recommend(recs){
+    const liked=recs.filter(r=>r.score>=4); if(liked.length<2) return [];
+    const gw={}; liked.forEach(r=>(r.flavors||[]).forEach(f=>{const g=CM.find.flavorOf(f); if(g)gw[g.id]=(gw[g.id]||0)+r.score;}));
+    const topGroups=Object.entries(gw).sort((a,b)=>b[1]-a[1]).map(e=>e[0]); const top1=topGroups[0];
+    const triedO=new Set(recs.map(r=>r.origin)), triedV=new Set(recs.flatMap(r=>r.varieties||[]));
+    const procAgg=CM.aggregate(recs.filter(r=>r.score),r=>r.processes||[]).filter(a=>a.scoreN>=2).sort((a,b)=>b.avg-a.avg);
+    const out=[];
+    const candO=CM.origins.filter(o=>!triedO.has(o.key)&&CM.originFlavorHint[o.key])
+      .map(o=>({o,fit:(CM.originFlavorHint[o.key]||[]).filter(g=>topGroups.slice(0,3).includes(g)).length})).sort((a,b)=>b.fit-a.fit);
+    if(candO[0]&&candO[0].fit>0&&top1){ const o=candO[0].o; const gn=(CM.find.flavorGroup(top1)||{}).cn||'';
+      out.push({type:'origin',key:o.key,flag:o.key,title:o.cn,reason:`你最爱「${gn}」风味，${o.cn} 正以此见长、还没喝过`}); }
+    const stars=['geisha','sl28','wushwush','pacamara','sidra','pinkbourbon','maragogipe'];
+    const v=stars.find(id=>!triedV.has(id)&&CM.find.variety(id));
+    if(v){ const vo=CM.find.variety(v); out.push({type:'variety',key:v,icon:'bean',title:vo.cn,reason:'精品塔尖名种，你的清单里还缺它'}); }
+    if(procAgg[0]){ const p=CM.find.process(procAgg[0].key);
+      out.push({type:'process',key:procAgg[0].key,icon:'flask',title:(p?p.cn:procAgg[0].key)+' · 换个产区',reason:`你给「${p?p.cn:''}」打分最高(均 ${procAgg[0].avg.toFixed(1)})，找支没喝过的再试`}); }
+    return out.slice(0,3);
+  }
+
   function renderPassport(){
     const c=document.getElementById('view-passport'); const recs=CM.store.all();
+    const rl=recommend(recs);
     const got=new Set(recs.map(r=>r.origin));
     const ach=achievements(recs);
     // 风味集邮册 / 大洲进度 / 寻豆清单
@@ -371,6 +397,13 @@ CM.app = (function(){
         <button class="btn dark" onclick="CM.app.openWrapped()">${CM.icon('award',{size:16})} 生成年度报告</button>
         <button class="btn ghost" onclick="CM.app.openBlind()">${CM.icon('target',{size:16})} 盲品猜产地</button>
       </div>
+      ${rl.length?`<div class="section-head mt40"><h2>下一支该喝什么</h2><div class="sub">基于你的高分记录推测 · 点开了解</div></div>
+        <div class="grid" style="grid-template-columns:repeat(auto-fill,minmax(260px,1fr))">
+          ${rl.map(x=>`<div class="rec-card" data-kt="${x.type}" data-kk="${CM.esc(x.key)}" style="cursor:pointer">
+            <div class="rec-ic">${x.flag?CM.flag(x.flag,'flag-lg'):CM.icon(x.icon||'bulb',{size:22})}</div>
+            <div style="flex:1;min-width:0"><div class="rec-t">${CM.esc(x.title)}</div><div class="rec-r">${CM.esc(x.reason)}</div></div>
+            <span style="color:var(--ink-3);flex:none">${CM.icon('chevronRight',{size:16})}</span></div>`).join('')}
+        </div>`:''}
       <div class="section-head mt40"><h2>世界产地印章</h2><div class="sub">点亮你喝过的每一个国家</div></div>
       <div class="grid stamp-grid">${CM.origins.map(o=>{const g=got.has(o.key);const ct=recs.filter(r=>r.origin===o.key).length;
         return `<div class="stamp ${g?'got':''}" ${g?`onclick="CM.app.openKnowledge('origin','${o.key}')" style="cursor:pointer"`:''}>
@@ -477,6 +510,10 @@ CM.app = (function(){
         </div>
       </details>
       <div class="field"><label>风味打分（5 分制）</label><div id="f-rate"></div></div>
+      <details class="recipe-group" ${(r.aspects&&Object.values(r.aspects).some(v=>v))?'open':''}>
+        <summary>五维细分评分 <span class="opt">选填 · 香气 / 酸质 / 甜感 / 醇厚 / 余韵</span></summary>
+        <div id="f-aspects" class="aspect-list"></div>
+      </details>
       <div class="field"><label>品鉴笔记 <span class="opt">选填</span></label><textarea class="input" id="f-notes" rows="3" placeholder="记录此刻的味觉旅程…">${CM.esc(r.notes||'')}</textarea></div>
       <div class="field"><label>照片 <span class="opt">可拖拽多张</span></label>
         <div class="drop" id="f-drop"><div class="ic">${CM.icon('camera',{size:30,stroke:1.5})}</div><div>点击或拖拽上传照片</div></div>
@@ -513,6 +550,12 @@ CM.app = (function(){
     function preview(v){ rate.querySelectorAll('.rstar').forEach(st=>{const idx=+st.dataset.i; st.querySelector('.rfg').style.width=(v>=idx?100:(v>=idx-0.5?50:0))+'%';}); }
     rate.onmouseleave=()=>drawRate(score); drawRate(score);
 
+    // 五维细分评分（滑块）
+    const aspVals={}; CM.scoreAspects.forEach(a=>{ aspVals[a.id]=(r.aspects&&r.aspects[a.id])||0; });
+    const aspWrap=m.body.querySelector('#f-aspects');
+    aspWrap.innerHTML=CM.scoreAspects.map(a=>`<div class="aspect-row"><span class="al">${a.cn}</span><input type="range" min="0" max="5" step="0.5" value="${aspVals[a.id]}" data-a="${a.id}"><span class="av" data-av="${a.id}">${aspVals[a.id]||'—'}</span></div>`).join('');
+    aspWrap.querySelectorAll('input[type=range]').forEach(inp=>{ inp.oninput=()=>{ aspVals[inp.dataset.a]=parseFloat(inp.value); aspWrap.querySelector(`[data-av="${inp.dataset.a}"]`).textContent=parseFloat(inp.value)>0?inp.value:'—'; }; });
+
     // photos
     let photos=[...(r.photos||[])]; const thumbs=m.body.querySelector('#f-thumbs');
     function paintThumbs(){ thumbs.innerHTML=photos.map((p,i)=>`<div class="thumb-wrap"><img class="thumb" src="${p}"><span class="rm" data-i="${i}">${CM.icon('x',{size:12,stroke:2.4})}</span></div>`).join('');
@@ -548,6 +591,7 @@ CM.app = (function(){
         brew:inputs.brew.get()[0]||'',
         price:parseFloat(m.body.querySelector('#f-price').value)||undefined,
         score, notes:m.body.querySelector('#f-notes').value.trim(), photos:[...photos], recipe,
+        aspects: Object.values(aspVals).some(v=>v>0) ? {...aspVals} : undefined,
       };
       if(!rec.origin){ toast('请选择国家/产区'); return; }
       // 立即保存：本地秒存 + 云端后台补传，照片先以本地图显示——绝不卡“保存中”；随后后台把照片传存储桶、换成 URL
@@ -620,6 +664,7 @@ CM.app = (function(){
       ${sec('处理法',(r.processes||[]).map(p=>{const x=CM.find.process(p);return ktag('process',p,x?x.cn:p,x&&x.color);}).join(''))}
       ${sec('烘焙度 / 海拔',(roast?ktag('roast',r.roast,roast.cn,roast.color):'')+(alt?` ${ktag('altitude',r.altitude,alt.cn)}`:''))}
       ${sec('风味',(r.flavors||[]).map(f=>{const g=CM.find.flavorOf(f);return ktag('flavor',f,f,g&&g.color);}).join(''))}
+      ${(r.aspects&&Object.values(r.aspects).some(v=>v))?`<div class="field"><label>五维风味</label><div id="rec-radar" class="center"></div></div>`:''}
       ${sec('冲煮方法',brew?ktag('brew',r.brew,brew.cn):'')}
       ${recipeChips(r)}
       ${extractHintHTML(r)}
@@ -629,7 +674,11 @@ CM.app = (function(){
         <button class="btn ghost" onclick="CM.app.replicateRecord('${r.id}')">${CM.icon('plus',{size:15})} 复刻这一版</button>
         <button class="btn ghost" onclick="CM.app.shareRecord('${r.id}')">${CM.icon('image',{size:15})} 生成分享图</button>
         <button class="btn dark" onclick="CM.app.editRecord('${r.id}')">编辑</button></div>`;
-    openModal('品鉴明细',body,{wide:true});
+    openModal('品鉴明细',body,{wide:true,onMount:(mb)=>{
+      const rr=mb.querySelector('#rec-radar');
+      if(rr && r.aspects){ const ax=CM.scoreAspects.map(a=>({label:a.cn,color:'#8a5a2b'}));
+        rr.appendChild(CM.charts.radar(ax,[{name:'这一杯',color:'#8a5a2b',values:CM.scoreAspects.map(a=>(r.aspects[a.id]||0)/5)}],230)); }
+    }});
   }
 
   /* ================= 知识卡片弹窗 ================= */
@@ -647,9 +696,12 @@ CM.app = (function(){
       <div class="sc-sub">${o.cn||''} ${r.estate?'· '+CM.esc(r.estate):''}</div>
       <div style="margin-top:14px;display:flex;align-items:center;gap:8px">${CM.starHTML(r.score,22)} <b style="font-size:20px">${(r.score||0).toFixed(1)}</b></div>
       <div class="sc-tags">${flavs}</div>
+      ${(r.aspects&&Object.values(r.aspects).some(v=>v))?`<div id="sc-radar" style="display:flex;justify-content:center;margin:6px 0"></div>`:''}
       ${r.notes?`<p style="color:#3a3a3c;font-size:15px;line-height:1.6">“${CM.esc(r.notes)}”</p>`:''}
       <div class="sc-foot"><span>${CM.fmtDate(r.tastedAt)} · ${CM.esc(r.shop||'')}</span><span class="sc-brand" style="display:inline-flex;align-items:center;gap:6px">${CM.icon('cup',{size:16})} CoffeeMap</span></div>`;
     document.body.appendChild(card);
+    const scr=card.querySelector('#sc-radar');
+    if(scr && r.aspects){ scr.appendChild(CM.charts.radar(CM.scoreAspects.map(a=>({label:a.cn,color:'#8a5a2b'})),[{name:'',color:'#8a5a2b',values:CM.scoreAspects.map(a=>(r.aspects[a.id]||0)/5)}],190)); }
     try{
       const canvas=await html2canvas(card,{backgroundColor:null,scale:2});
       const url=canvas.toDataURL('image/png');

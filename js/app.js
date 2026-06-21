@@ -236,6 +236,7 @@ CM.app = (function(){
     const avg=scored.reduce((s,r)=>s+r.score,0)/(scored.length||1);
     const byOrigin=CM.aggregate(recs,r=>r.origin);
     const best=byOrigin.slice().sort((a,b)=>b.avg-a.avg)[0];
+    const fp=prefFingerprint(recs), lg=ledger(recs);
     c.innerHTML=`
       <div class="section-head"><h2>统计</h2><div class="sub">多维度数量与评分</div></div>
       <div class="grid stat-grid">
@@ -256,7 +257,19 @@ CM.app = (function(){
       </div>
 
       <div class="section-head mt40"><h2>风味热力图</h2><div class="sub">13 大风味类别的偏好强度 · 点击看知识</div></div>
-      <div class="card" style="padding:24px"><div class="heat" id="heat"></div></div>`;
+      <div class="card" style="padding:24px"><div class="heat" id="heat"></div></div>
+
+      ${fp.length?`<div class="section-head mt40"><h2>口味偏好指纹</h2><div class="sub">你给哪些维度打分更高 / 更低 · 仅取样本 ≥ 2</div></div>
+        <div class="card" style="padding:22px"><div id="ch-fp"></div><div class="muted" style="font-size:12px;margin-top:12px">正分 = 该项均分高于你的总体均分；负分 = 偏低</div></div>`:''}
+
+      ${lg.priced?`<div class="section-head mt40"><h2>消费账本</h2><div class="sub">基于 ${lg.priced} 杯有价格的记录</div></div>
+        <div class="grid stat-grid">
+          <div class="stat"><div class="k">总消费</div><div class="v">¥${Math.round(lg.total)}</div><div class="foot">${lg.priced} 杯有记价</div></div>
+          <div class="stat"><div class="k">每杯均价</div><div class="v">¥${lg.avgCup.toFixed(0)}</div><div class="foot">平均每杯花费</div></div>
+          ${lg.best?`<div class="stat"><div class="k">性价比之王</div><div class="v" style="font-size:19px;margin-top:14px">${CM.esc(lg.best.r.name||(CM.find.origin(lg.best.r.origin)||{}).cn||'一杯咖啡')}</div><div class="foot">¥${lg.best.r.price} · ${lg.best.r.score}★ · ${lg.best.vps.toFixed(0)} 元/分</div></div>`:''}
+          ${(lg.worst&&lg.worst!==lg.best)?`<div class="stat"><div class="k">最贵的体验</div><div class="v" style="font-size:19px;margin-top:14px">${CM.esc(lg.worst.r.name||(CM.find.origin(lg.worst.r.origin)||{}).cn||'一杯咖啡')}</div><div class="foot">¥${lg.worst.r.price} · ${lg.worst.r.score}★ · ${lg.worst.vps.toFixed(0)} 元/分</div></div>`:''}
+        </div>
+        ${lg.shopSpend.length?`<div class="card mt16" style="padding:22px"><h4 class="muted" style="margin-bottom:14px">各店 · 人均消费</h4><div id="ch-shop"></div></div>`:''}`:''}`;
 
     // bars: origin count
     document.getElementById('ch-origin').appendChild(CM.charts.bars(byOrigin.slice(0,8).map(d=>{
@@ -288,6 +301,36 @@ CM.app = (function(){
       return `<div class="cell" data-kt="flavor" data-kk="${g.id}" title="${g.cn} · ${ct}" style="background:${ct?hexA(g.color,a):'var(--bg-2)'};color:${a>.55?'#fff':'var(--ink-2)'}">
         <b style="font-size:16px">${ct}</b>${g.cn}</div>`;
     }).join('');
+    // F: 口味偏好指纹（发散 bars）
+    if(fp.length){ const el=document.getElementById('ch-fp'); if(el) el.appendChild(CM.charts.bars(fp.slice(0,8).map(x=>({
+      label:x.label, value:Math.abs(x.delta)+0.001, display:(x.delta>=0?'+':'−')+Math.abs(x.delta).toFixed(1), color:x.delta>=0?'#3aa76a':'#cf6b5b' })))); }
+    // G: 各店人均消费
+    if(lg.shopSpend&&lg.shopSpend.length){ const el=document.getElementById('ch-shop'); if(el) el.appendChild(CM.charts.bars(lg.shopSpend.slice(0,8).map(s=>({label:s.key,value:Math.round(s.avgPrice),display:'¥'+Math.round(s.avgPrice)+' · '+s.avgScore.toFixed(1)+'★'})))); }
+  }
+  // 口味偏好指纹：各维度均分 − 总体均分（仅样本≥2），按强度排序
+  function prefFingerprint(recs){
+    const scored=recs.filter(r=>r.score); if(scored.length<3) return [];
+    const overall=scored.reduce((s,r)=>s+r.score,0)/scored.length;
+    const dims=[
+      {label:p=>(CM.find.process(p)||{}).cn||p, gen:r=>r.processes||[]},
+      {label:p=>(CM.find.roast(p)||{}).cn||p, gen:r=>r.roast},
+      {label:p=>(CM.find.variety(p)||{}).cn||p, gen:r=>r.varieties||[]},
+      {label:p=>(CM.find.flavorGroup(p)||{}).cn||p, gen:r=>[...new Set((r.flavors||[]).map(f=>(CM.find.flavorOf(f)||{}).id).filter(Boolean))]},
+    ];
+    const items=[];
+    dims.forEach(d=>{ CM.aggregate(scored,d.gen).forEach(a=>{ if(a.scoreN>=2) items.push({label:String(d.label(a.key)).split(' ')[0],delta:a.avg-overall,count:a.count}); }); });
+    return items.sort((a,b)=>Math.abs(b.delta)-Math.abs(a.delta));
+  }
+  // 消费账本
+  function ledger(recs){
+    const priced=recs.filter(r=>r.price>0);
+    const total=priced.reduce((s,r)=>s+r.price,0);
+    const avgCup=priced.length?total/priced.length:0;
+    const valued=priced.filter(r=>r.score>0).map(r=>({r,vps:r.price/r.score})).sort((a,b)=>a.vps-b.vps);
+    const byShop=CM.aggregate(priced.filter(r=>r.shop),r=>r.shop);
+    const shopSpend=byShop.map(s=>{ const rs=priced.filter(r=>r.shop===s.key); return {key:s.key,avgPrice:rs.reduce((a,r)=>a+r.price,0)/rs.length,avgScore:s.avg,count:s.count}; })
+      .sort((a,b)=>b.avgPrice-a.avgPrice);
+    return {total,avgCup,priced:priced.length,best:valued[0],worst:valued[valued.length-1],shopSpend};
   }
   function flavorGroupCounts(recs){
     const m={}; CM.flavorGroups.forEach(g=>m[g.id]={id:g.id,count:0});

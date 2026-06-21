@@ -247,6 +247,7 @@ CM.app = (function(){
 
       <div class="grid mt40" style="grid-template-columns:repeat(auto-fit,minmax(330px,1fr))">
         <div class="card" style="padding:22px"><h4 class="muted" style="margin-bottom:14px">产地 · 杯数 Top</h4><div id="ch-origin"></div></div>
+        <div class="card" style="padding:22px"><h4 class="muted" style="margin-bottom:14px">豆种 · 杯数 Top</h4><div id="ch-variety"></div></div>
         <div class="card" style="padding:22px"><h4 class="muted" style="margin-bottom:14px">处理法分布</h4><div id="ch-process"></div></div>
         <div class="card" style="padding:22px"><h4 class="muted" style="margin-bottom:14px">烘焙度分布</h4><div id="ch-roast"></div></div>
         <div class="card" style="padding:22px"><h4 class="muted" style="margin-bottom:14px">冲煮方法</h4><div id="ch-brew"></div></div>
@@ -261,6 +262,10 @@ CM.app = (function(){
     document.getElementById('ch-origin').appendChild(CM.charts.bars(byOrigin.slice(0,8).map(d=>{
       const o=CM.find.origin(d.key); return {key:d.key,label:o.cn,emoji:CM.flag(d.key),value:d.count,display:d.count+' 杯',onClick:()=>filterBy('origin',d.key)};
     })));
+    // bars: variety count
+    const byVar=CM.aggregate(recs,r=>r.varieties||[]); const vEl=document.getElementById('ch-variety');
+    if(byVar.length) vEl.appendChild(CM.charts.bars(byVar.slice(0,8).map(d=>{const v=CM.find.variety(d.key);return{key:d.key,label:v?v.cn:d.key,emoji:CM.icon('bean',{size:14}),value:d.count,display:d.count+' 杯',onClick:()=>filterBy('variety',d.key)};})));
+    else vEl.innerHTML='<div class="muted" style="font-size:13px;padding:8px 0">还没记录豆种</div>';
     // donut process
     const byProc=CM.aggregate(recs,r=>r.processes||[]);
     document.getElementById('ch-process').appendChild(CM.charts.donut(byProc.map(d=>{const p=CM.find.process(d.key);return{key:d.key,label:p?p.cn:d.key,value:d.count,color:p?p.color:'#ccc'};}),{centerSub:'记录',onClick:k=>openKnowledge('process',k)}));
@@ -321,23 +326,53 @@ CM.app = (function(){
         return `<div class="stamp ${g?'got':''}" ${g?`onclick="CM.app.openKnowledge('origin','${o.key}')" style="cursor:pointer"`:''}>
           <span class="em">${CM.flag(o.key,'flag-lg')}</span><span class="nm">${o.cn}</span><span class="ct">${g?ct+' 杯':'未解锁'}</span></div>`;}).join('')}</div>
       <div class="section-head mt40"><h2>成就</h2><div class="sub">${ach.filter(a=>a.got).length} / ${ach.length} 已达成</div></div>
-      <div class="grid" style="grid-template-columns:repeat(auto-fill,minmax(250px,1fr))">
-        ${ach.map(a=>`<div class="ach ${a.got?'':'locked'}"><div class="ic" style="color:var(--accent)">${CM.icon(a.icon,{size:24})}</div><div class="meta"><div class="t">${a.title}</div><div class="d">${a.desc}</div></div></div>`).join('')}</div>`;
+      <div class="grid" style="grid-template-columns:repeat(auto-fill,minmax(220px,1fr))">
+        ${ach.map(a=>`<div class="ach ${a.got?'':'locked'}"><div class="ic" style="color:var(--accent)">${CM.icon(a.icon,{size:24})}</div><div class="meta"><div class="t">${a.title}</div><div class="d">${a.desc}</div>${(a.progress&&!a.got)?`<div class="ach-prog"><span style="width:${Math.round(100*a.progress.cur/a.progress.need)}%"></span></div>`:''}</div></div>`).join('')}</div>`;
   }
   function achievements(recs){
-    const origins=new Set(recs.map(r=>r.origin));
+    const n=recs.length, has=fn=>recs.some(fn);
+    const origins=new Set(recs.map(r=>r.origin).filter(Boolean));
     const procs=new Set(recs.flatMap(r=>r.processes||[]));
+    const varis=new Set(recs.flatMap(r=>r.varieties||[]));
+    const brews=new Set(recs.map(r=>r.brew).filter(Boolean));
     const flavs=new Set(recs.flatMap(r=>r.flavors||[]));
-    const has=fn=>recs.some(fn);
+    const conts=new Set(recs.map(r=>(CM.find.origin(r.origin)||{}).continent).filter(Boolean));
+    const allConts=new Set(CM.origins.map(o=>o.continent).filter(Boolean));
+    const grp=new Set(); recs.forEach(r=>(r.flavors||[]).forEach(f=>{const g=CM.find.flavorOf(f); if(g)grp.add(g.id);}));
+    const washedN=recs.filter(r=>(r.processes||[]).includes('washed')).length;
+    const recipeN=recs.filter(r=>r.recipe&&Object.values(r.recipe).some(v=>v!=null&&v!=='')).length;
+    const aspectN=recs.filter(r=>r.aspects&&Object.values(r.aspects).some(v=>v!=null&&v!=='')).length;
+    const procExplore=['washed','natural','honey'].filter(p=>procs.has(p)).length + ([...procs].some(p=>['anaerobic','carbonic','doubleferment'].includes(p))?1:0);
+    // 连续高分(≥4.5)最长连击（按品鉴时间）
+    const ordered=recs.filter(r=>r.score).slice().sort((a,b)=>(a.tastedAt||'').localeCompare(b.tastedAt||'')||((a.createdAt||0)-(b.createdAt||0)));
+    let s=0,streak=0; ordered.forEach(r=>{ if(r.score>=4.5){s++; if(s>streak)streak=s;} else s=0; });
+    const T=(icon,title,note,cur,need,unit)=>({icon,title,desc:`${note} ${Math.min(cur,need)}/${need}${unit||''}`,got:cur>=need,progress:{cur:Math.min(cur,need),need}});
+    const F=(icon,title,desc,got)=>({icon,title,desc,got});
     return [
-      {icon:'globe',title:'环球咖啡客',desc:`品鉴 ${origins.size} 个产地（目标 10）`,got:origins.size>=10},
-      {icon:'flower',title:'瑰夏猎人',desc:'品鉴过瑰夏 Geisha',got:has(r=>(r.varieties||[]).includes('geisha'))},
-      {icon:'flask',title:'厌氧实验家',desc:'尝试过厌氧/CM 处理',got:[...procs].some(p=>['anaerobic','carbonic','doubleferment'].includes(p))},
-      {icon:'sparkle',title:'五星时刻',desc:'给出过一杯满分',got:has(r=>r.score>=5)},
-      {icon:'palette',title:'风味广度',desc:`记录 ${flavs.size} 种风味（目标 15）`,got:flavs.size>=15},
-      {icon:'cup',title:'十杯达成',desc:`累计 ${recs.length} 杯（目标 10）`,got:recs.length>=10},
-      {icon:'flame',title:'深烘也懂',desc:'记录过中深/深烘',got:has(r=>['mediumdark','dark'].includes(r.roast))},
-      {icon:'droplet',title:'水洗纯粹党',desc:'记录过 5 杯水洗',got:recs.filter(r=>(r.processes||[]).includes('washed')).length>=5},
+      T('cup','十杯达成','累计品鉴',n,10,' 杯'),
+      T('cup','廿五杯','累计品鉴',n,25,' 杯'),
+      T('cup','半百老饕','累计品鉴',n,50,' 杯'),
+      T('cup','百杯传奇','累计品鉴',n,100,' 杯'),
+      T('globe','产地猎手','走过产地',origins.size,5,' 国'),
+      T('globe','环球咖啡客','走过产地',origins.size,10,' 国'),
+      T('globe','环球咖啡客·金','走过产地',origins.size,15,' 国'),
+      T('map','三大洲集齐','咖啡带版图',conts.size,allConts.size||3,' 洲'),
+      T('bean','品种探索家','尝过豆种',varis.size,8,' 种'),
+      T('bean','品种学者','尝过豆种',varis.size,15,' 种'),
+      T('palette','风味全光谱','触达风味大类',grp.size,CM.flavorGroups.length,' 类'),
+      T('sparkle','风味广度','记录风味',flavs.size,20,' 种'),
+      T('flask','处理法行家','玩转处理法',procExplore,4,' 类'),
+      T('clock','冲煮玩家','用过冲煮法',brews.size,5,' 种'),
+      T('droplet','水洗纯粹党','记录水洗',washedN,5,' 杯'),
+      T('award','连胜手感','连续高分≥4.5',streak,3,' 杯'),
+      T('book','配方记录者','记录冲煮配方',recipeN,10,' 份'),
+      F('flower','瑰夏猎人','品鉴过瑰夏 Geisha',varis.has('geisha')),
+      F('sparkle','五星时刻','给出过一杯满分 5★',has(r=>r.score>=5)),
+      F('flame','深烘也懂','记录过中深 / 深烘',has(r=>['mediumdark','dark'].includes(r.roast))),
+      F('flask','厌氧实验家','尝试过厌氧 / CM / 双重发酵',[...procs].some(p=>['anaerobic','carbonic','doubleferment'].includes(p))),
+      F('store','一掷千金','喝过一杯 ≥ ¥100',has(r=>r.price>=100)),
+      F('bulb','平价之光','≤ ¥20 喝到 ≥ 4★',has(r=>r.price&&r.price<=20&&r.score>=4)),
+      F('chart','五维品鉴师','用过五维细分评分',aspectN>=1),
     ];
   }
 

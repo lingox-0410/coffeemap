@@ -404,6 +404,18 @@ CM.app = (function(){
         <div class="field"><label>冲煮方法</label><div id="f-brew"></div></div>
         <div class="field"><label>价格 <span class="opt">选填，元</span></label><input class="input" type="number" id="f-price" placeholder="如：42" value="${r.price||''}"></div>
       </div>
+      <details class="recipe-group" ${(r.recipe&&Object.values(r.recipe).some(v=>v!=null&&v!==''))?'open':''}>
+        <summary>冲煮配方 <span class="opt">选填 · 想复刻一杯好咖啡就记</span></summary>
+        <div class="recipe-grid">
+          <div class="field"><label>粉量 g</label><input class="input" type="number" id="f-dose" placeholder="如 15" value="${(r.recipe&&r.recipe.dose)||''}"></div>
+          <div class="field"><label>水量 g</label><input class="input" type="number" id="f-water" placeholder="如 240" value="${(r.recipe&&r.recipe.water)||''}"></div>
+          <div class="field"><label>粉水比 <span class="opt">自动</span></label><input class="input" id="f-ratio" placeholder="1:16" value="${CM.esc((r.recipe&&r.recipe.ratio)||'')}"></div>
+          <div class="field"><label>研磨度</label><input class="input" id="f-grind" placeholder="如 C40 22格 / 中细" value="${CM.esc((r.recipe&&r.recipe.grind)||'')}"></div>
+          <div class="field"><label>水温 ℃</label><input class="input" type="number" id="f-temp" placeholder="如 92" value="${(r.recipe&&r.recipe.temp)||''}"></div>
+          <div class="field"><label>时间</label><input class="input" id="f-time" placeholder="如 2:30" value="${CM.esc((r.recipe&&r.recipe.time)||'')}"></div>
+          <div class="field"><label>TDS %</label><input class="input" id="f-tds" placeholder="如 1.35" value="${CM.esc((r.recipe&&r.recipe.tds)||'')}"></div>
+        </div>
+      </details>
       <div class="field"><label>风味打分（5 分制）</label><div id="f-rate"></div></div>
       <div class="field"><label>品鉴笔记 <span class="opt">选填</span></label><textarea class="input" id="f-notes" rows="3" placeholder="记录此刻的味觉旅程…">${CM.esc(r.notes||'')}</textarea></div>
       <div class="field"><label>照片 <span class="opt">可拖拽多张</span></label>
@@ -453,8 +465,16 @@ CM.app = (function(){
     ['dragleave','drop'].forEach(ev=>drop.addEventListener(ev,e=>{e.preventDefault();drop.classList.remove('over');}));
     drop.addEventListener('drop',async e=>{ for(const f of e.dataTransfer.files){ if(f.type.startsWith('image/')) photos.push(await CM.resizeImage(f)); } paintThumbs(); });
 
+    // 冲煮配方：粉水比自动算
+    const doseEl=m.body.querySelector('#f-dose'), waterEl=m.body.querySelector('#f-water'), ratioEl=m.body.querySelector('#f-ratio');
+    function autoRatio(){ const d=parseFloat(doseEl.value), w=parseFloat(waterEl.value); if(d>0&&w>0) ratioEl.value='1:'+(w/d).toFixed(1); }
+    doseEl.addEventListener('input',autoRatio); waterEl.addEventListener('input',autoRatio);
+
     const saveBtn=m.body.querySelector('#f-save');
     saveBtn.onclick=()=>{
+      const rv=k=>{ const v=m.body.querySelector('#f-'+k).value.trim(); return v===''?undefined:v; };
+      const recipeO={ dose:rv('dose'), water:rv('water'), ratio:rv('ratio'), grind:rv('grind'), temp:rv('temp'), time:rv('time'), tds:rv('tds') };
+      const recipe = Object.values(recipeO).some(v=>v!=null) ? recipeO : undefined;
       const rec={
         id:editId||undefined, createdAt:editId?r.createdAt:Date.now(),
         name:m.body.querySelector('#f-name').value.trim(),
@@ -467,7 +487,7 @@ CM.app = (function(){
         tastedAt:m.body.querySelector('#f-date').value,
         brew:inputs.brew.get()[0]||'',
         price:parseFloat(m.body.querySelector('#f-price').value)||undefined,
-        score, notes:m.body.querySelector('#f-notes').value.trim(), photos:[...photos],
+        score, notes:m.body.querySelector('#f-notes').value.trim(), photos:[...photos], recipe,
       };
       if(!rec.origin){ toast('请选择国家/产区'); return; }
       // 立即保存：本地秒存 + 云端后台补传，照片先以本地图显示——绝不卡“保存中”；随后后台把照片传存储桶、换成 URL
@@ -475,6 +495,50 @@ CM.app = (function(){
       m.close(); refresh(); toast(editId?'已更新':'已记录 · 干得漂亮');
       backgroundUploadPhotos(rec.id, rec.photos);
     };
+  }
+
+  /* ===== 冲煮实验室助手（明细页用）===== */
+  function recipeChips(r){
+    const rc=r.recipe; if(!rc||!Object.values(rc).some(v=>v!=null&&v!=='')) return '';
+    const chip=(lab,v,unit)=> (v!=null&&v!=='')?`<span class="tag ghost">${lab} ${CM.esc(String(v))}${unit||''}</span>`:'';
+    const html=chip('粉',rc.dose,'g')+chip('水',rc.water,'g')+(rc.ratio?`<span class="tag ghost">${CM.esc(rc.ratio)}</span>`:'')+chip('研磨',rc.grind,'')+chip('水温',rc.temp,'℃')+chip('时间',rc.time,'')+chip('TDS',rc.tds,'%');
+    return `<div class="field"><label>冲煮配方</label><div class="wrap-tags">${html}</div></div>`;
+  }
+  function extractionHint(r){
+    const flavs=r.flavors||[]; if(!flavs.length) return null;
+    let under=0, over=0;
+    flavs.forEach(f=>{ if(CM.extractSignal.under.some(k=>String(f).includes(k))) under++; if(CM.extractSignal.over.some(k=>String(f).includes(k))) over++; });
+    if(under>over) return {v:'偏萃取不足',t:'尝到尖酸 / 青草 / 咸感 → 试试调细研磨、提高水温或延长时间'};
+    if(over>under) return {v:'偏萃取过度',t:'发苦 / 木质 / 干涩 → 试试调粗研磨、降低水温或缩短时间'};
+    return {v:'未见明显欠 / 过萃',t:'风味里没有典型的欠萃(尖酸/青草)或过萃(苦/木)信号，整体看着均衡'};
+  }
+  function extractHintHTML(r){
+    const h=extractionHint(r); if(!h) return '';
+    return `<div class="field"><label>萃取自检 <span class="opt">基于风味的启发式参考</span></label>
+      <div class="extract-hint">${CM.icon('flask',{size:16})}<div><div class="eh-v">${h.v}</div><div class="eh-t">${CM.esc(h.t)}</div></div></div></div>`;
+  }
+  function iterationsOf(r){
+    const all=CM.store.all();
+    let sib=all.filter(x=> x.name && r.name && x.name===r.name && x.origin===r.origin);
+    if(sib.length<2) sib=all.filter(x=> x.origin===r.origin && (x.varieties||[]).some(v=>(r.varieties||[]).includes(v)));
+    if(!sib.find(x=>x.id===r.id)) sib=[r,...sib];
+    const seen=new Set(); sib=sib.filter(x=>{ if(seen.has(x.id))return false; seen.add(x.id); return true; });
+    return sib.sort((a,b)=>(a.tastedAt||'').localeCompare(b.tastedAt||'')||((a.createdAt||0)-(b.createdAt||0)));
+  }
+  function timelineHTML(r){
+    const its=iterationsOf(r); if(its.length<2) return '';
+    const row=it=>{ const rc=it.recipe||{}; const meta=[rc.ratio,rc.grind,rc.temp?rc.temp+'℃':''].filter(Boolean).join(' · ')||'未记配方';
+      return `<li class="${it.id===r.id?'is-current':''}" ${it.id!==r.id?`onclick="CM.app.openRecord('${it.id}')" style="cursor:pointer"`:''}>
+        <div class="tl-d">${CM.fmtDate(it.tastedAt)}</div><div class="tl-m">${CM.esc(meta)}</div><div class="tl-s">${CM.starHTML(it.score,13)}</div></li>`; };
+    return `<div class="field"><label>同款豆 · 冲煮迭代（${its.length} 次）<span class="opt">点开看哪次最甜</span></label><ol class="timeline">${its.map(row).join('')}</ol></div>`;
+  }
+  function replicateRecord(id){
+    const r=CM.store.get(id); if(!r) return;
+    const { id:_i, createdAt:_c, tastedAt:_t, score:_s, notes:_n, photos:_p, ...keep }=r;
+    const prefill={ ...keep, tastedAt:new Date().toISOString().slice(0,10), score:0, notes:'', photos:[] };
+    while(modalStack.length){ const s=modalStack.pop(); s.classList.remove('show'); setTimeout(()=>s.remove(),250); }
+    openForm(prefill);
+    toast('已带入上一版参数，调一个变量再喝一次');
   }
 
   /* ================= 记录明细弹窗 ================= */
@@ -497,8 +561,12 @@ CM.app = (function(){
       ${sec('烘焙度 / 海拔',(roast?ktag('roast',r.roast,roast.cn,roast.color):'')+(alt?` ${ktag('altitude',r.altitude,alt.cn)}`:''))}
       ${sec('风味',(r.flavors||[]).map(f=>{const g=CM.find.flavorOf(f);return ktag('flavor',f,f,g&&g.color);}).join(''))}
       ${sec('冲煮方法',brew?ktag('brew',r.brew,brew.cn):'')}
+      ${recipeChips(r)}
+      ${extractHintHTML(r)}
+      ${timelineHTML(r)}
       ${r.notes?`<div class="field"><label>品鉴笔记</label><p class="kdesc">${CM.esc(r.notes)}</p></div>`:''}
-      <div class="flex gap12 mt24" style="justify-content:flex-end">
+      <div class="flex gap12 mt24" style="justify-content:flex-end;flex-wrap:wrap">
+        <button class="btn ghost" onclick="CM.app.replicateRecord('${r.id}')">${CM.icon('plus',{size:15})} 复刻这一版</button>
         <button class="btn ghost" onclick="CM.app.shareRecord('${r.id}')">${CM.icon('image',{size:15})} 生成分享图</button>
         <button class="btn dark" onclick="CM.app.editRecord('${r.id}')">编辑</button></div>`;
     openModal('品鉴明细',body,{wide:true});
@@ -998,6 +1066,6 @@ CM.app = (function(){
 
   return { init, switchView, openForm, openRecord, editRecord:id=>openForm({},id), deleteRecord:id=>{ if(confirm('删除这条记录？')){CM.store.remove(id); while(modalStack.length){const s=modalStack.pop();s.classList.remove('show');setTimeout(()=>s.remove(),250);} refresh(); toast('已删除');} },
     openKnowledge, filterBy, clearFilter, shareRecord, openWrapped, openBlind, exportData, importData, clearAll, refresh,
-    migrateLegacyPhotos, legacyPhotoCount:_legacyPhotoCount, backgroundUploadPhotos, forceSync };
+    migrateLegacyPhotos, legacyPhotoCount:_legacyPhotoCount, backgroundUploadPhotos, forceSync, replicateRecord };
 })();
 document.addEventListener('DOMContentLoaded',CM.app.init);

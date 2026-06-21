@@ -324,6 +324,31 @@ table.detail td .mini-tags{ display:flex; gap:4px; }
 .ach-prog{ height:5px; border-radius:3px; background:var(--bg-2); margin-top:7px; overflow:hidden; }
 .ach-prog span{ display:block; height:100%; background:var(--accent); border-radius:3px; transition:width .4s; }
 
+/* 冲煮配方折叠组 */
+.recipe-group{ border:1px solid var(--hairline); border-radius:14px; padding:0 14px; margin-bottom:18px; }
+.recipe-group>summary{ list-style:none; cursor:pointer; padding:13px 2px; font-weight:600; font-size:14px; display:flex; align-items:center; gap:8px; min-height:44px; }
+.recipe-group>summary::-webkit-details-marker{ display:none; }
+.recipe-group>summary::after{ content:''; width:8px; height:8px; border-right:2px solid var(--ink-3); border-bottom:2px solid var(--ink-3); transform:rotate(45deg); margin-left:auto; transition:.2s; }
+.recipe-group[open]>summary::after{ transform:rotate(-135deg); }
+.recipe-grid{ display:grid; grid-template-columns:1fr 1fr; gap:12px; padding:2px 0 14px; }
+@media (max-width:720px){ .recipe-grid{ grid-template-columns:1fr; } }
+
+/* 同款豆迭代时间线 */
+.timeline{ list-style:none; position:relative; margin:6px 0 0; padding:0 0 0 20px; }
+.timeline::before{ content:''; position:absolute; left:5px; top:8px; bottom:8px; width:2px; background:var(--hairline); }
+.timeline li{ position:relative; display:flex; align-items:center; gap:10px; padding:9px 0; min-height:40px; }
+.timeline li::before{ content:''; position:absolute; left:-19px; top:50%; transform:translateY(-50%); width:9px; height:9px; border-radius:50%; background:var(--hairline-2); border:2px solid var(--surface,#fff); }
+.timeline li.is-current::before{ background:var(--accent); }
+.timeline li.is-current .tl-m{ font-weight:600; }
+.timeline .tl-d{ font-size:12.5px; color:var(--ink-2); width:74px; flex:none; font-variant-numeric:tabular-nums; }
+.timeline .tl-m{ font-size:12.5px; color:var(--ink); flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.timeline .tl-s{ flex:none; }
+
+/* 萃取自检提示 */
+.extract-hint{ display:flex; gap:10px; align-items:flex-start; border-left:3px solid var(--accent); background:var(--bg-2); border-radius:12px; padding:12px 14px; color:var(--accent); }
+.extract-hint .eh-v{ font-weight:600; font-size:13.5px; color:var(--ink); }
+.extract-hint .eh-t{ font-size:12.5px; color:var(--ink-2); margin-top:3px; line-height:1.5; }
+
 /* radar */
 .radar-wrap{ display:flex; gap:30px; align-items:center; flex-wrap:wrap; justify-content:center; }
 
